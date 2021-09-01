@@ -1,4 +1,6 @@
 # test for Compliance
+using Plots
+gr()
 
 include("lsAdvect.jl")
 
@@ -41,7 +43,7 @@ dΩ = Measure(Ω,degree)
 Γ  = BoundaryTriangulation(model,tags="load")
 dΓ = Measure(Γ,degree)
 
-# Levelset initialization
+# * == 3. Levelset initialization
 #ϕ_(x) = min.((x[1] .- 0.25).^2 .+ (x[2] .- 0.25).^2 - 0.1^2,(x[1] .- 0.1).^2 .+ (x[2] .- 0.1).^2 - 0.08^2)
 ϕ_(x) = -Signum.( sin.(4*2π*x[1]).*cos.(4*4π*x[2]) ,β=2)
 ϕ = lazy_map(ϕ_,xc)
@@ -53,11 +55,11 @@ max_iter   = 500
 phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
 phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="RK2",Δt=0.1*d_max)
 
-# * == 3. Material setting
+
+
+# * == 4. Material setting
 E = 10e9 * (phi.<=0) + 1e2*(phi.>0)
 ν = 0.3
-
-
 
 function E_to_C(E)
   
@@ -83,8 +85,10 @@ l(v) = ∫(v⋅g)dΓ
 op = AffineFEOperator(a,l,U,V0)
 uh = solve(op)
 
-# Compliance speed
-η = 0.2
+# * == 5. Compliance speed
+compliance = [] # init
+
+η = 1.0 # 0.2 # volume penalty
 area = collect(get_array(∫(1.0)dΩ))
 V(u) = σ(u) ⊙ ε(u)
 Vc = collect(get_array(∫(V(uh))dΩ)) ./ area #! SLOW
@@ -99,7 +103,9 @@ println("[0] min,max(V) = ",minimum(Vc)," , ",maximum(Vc))
 writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh)],celldata=["speed"=>Vc,"E"=>E,"phi"=>phi])
 
 
-# * == 4. Optimization Loop
+# * == 6. Optimization Loop
+
+push!(compliance,sum(l(uh)))
 
 for k in 1:max_iter
   global phi #? this is annoying
@@ -123,7 +129,8 @@ for k in 1:max_iter
   global uh = solve(op)
 
   global Vc = collect(get_array(∫(V(uh))dΩ)) ./ area
-  
+  push!(compliance,sum(l(uh)))
+
   Vc /= mean(Vc) #maximum(Vc)
   println("[$(k)] min,max(V) = ",minimum(Vc)," , ",maximum(Vc))
 
@@ -131,4 +138,10 @@ for k in 1:max_iter
     println("iter: ",k)
     writevtk(Ω,"out/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh)],celldata=["speed"=>Vc,"E"=>E,"phi"=>phi])
   end
+
+  # from https://stackoverflow.com/questions/30789256/is-there-a-way-to-plot-graph-in-julia-while-executing-loops
+  pp = plot(compliance, yaxis=:log10)
+  display(pp)
+  sleep(0.1)
+
 end
