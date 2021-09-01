@@ -1,0 +1,4 @@
+# GIT ignore files
+*.log
+out
+.vscode
