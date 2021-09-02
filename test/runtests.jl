@@ -1,8 +1,9 @@
+using LevelSetAdvection
+using Test
+
 # test for Compliance
 using Plots
 gr()
-
-include("lsAdvect.jl")
 
 # auxiliars
 mean(x) = sum(x)/length(x)
@@ -50,11 +51,10 @@ dΓ = Measure(Γ,degree)
 
 each_save  = 10
 each_reinit = 2
-max_iter   = 500
+max_iter   = 100
 
 phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
 phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="RK2",Δt=0.1*d_max)
-
 
 
 # * == 4. Material setting
@@ -101,7 +101,6 @@ println("[0] min,max(V) = ",minimum(Vc)," , ",maximum(Vc))
 Δt = 0.2*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
 
 writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh)],celldata=["speed"=>Vc,"E"=>E,"phi"=>phi])
-
 
 # * == 6. Optimization Loop
 

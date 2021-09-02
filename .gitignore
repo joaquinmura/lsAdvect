@@ -1,4 +1,6 @@
-# GIT ignore files
-*.log
-out
-.vscode
+*.jl.*.cov
+*.jl.cov
+*.jl.mem
+/Manifest.toml
+/docs/build/
+/test/out/

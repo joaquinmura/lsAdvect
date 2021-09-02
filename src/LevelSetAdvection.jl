@@ -1,12 +1,14 @@
-#module lsAdvect #not yet!
+module LevelSetAdvection
 
-export get_cellcenter_coordinates, get_cell_diameter, upwind2d_step, ReinitHJ2d_update
+export  get_cellcenter_coordinates, get_cell_diameter,
+        upwind2d_step, ReinitHJ2d_update, Signum
 
 ##############################################
-using Gridap
-using Gridap.Geometry # get_grid_topology
-using Gridap.ReferenceFEs # get_faces
-using Gridap.TensorValues
+using Reexport
+@reexport using Gridap
+@reexport using Gridap.Geometry # get_grid_topology
+@reexport using Gridap.ReferenceFEs # get_faces
+@reexport using Gridap.TensorValues
 ##############################################
 
 # Auxiliar functions
@@ -322,5 +324,4 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
     return ϕ
 end
 
-
-#end # of module
+end
