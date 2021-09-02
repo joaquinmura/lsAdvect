@@ -1,6 +1,6 @@
 name = "LevelSetAdvection"
 uuid = "a87bfabe-56cb-40bc-b3ea-027cb9b3338b"
-authors = ["Mohamed Tarek <mohamed82008@gmail.com> and contributors"]
+authors = ["Joaquín Mura and contributors"]
 version = "0.1.0"
 
 [deps]
