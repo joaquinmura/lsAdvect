@@ -106,19 +106,30 @@ writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ
 
 push!(compliance,sum(l(uh)))
 
+#= only testing:
+struct my_update <: Map end
+evaluate!(cache,::my_update,x,y)=x-y
+Update = my_update() =#
+
 for k in 1:max_iter
+  #global ϕ # for lazy_map
   global phi #? this is annoying
   ∇ϕ = upwind2d_step(topo,xc,phi,Vc.-η)
 
   #global phi = phi .- Δt*∇ϕ # Scope error in Julia
+  #=
   for i in eachindex(phi)
-    phi[i] -= Δt*∇ϕ[i]
-  end
-  #ϕ = lazy_map(=,ϕ - Δt*∇ϕ) # not working
+    phi[i] -= Δt*∇ϕ[i] # this works
+  end =#
+  #ϕ = lazy_map(=,ϕ .- Δt.*∇ϕ) # not working
+  #ϕ = lazy_map(-,Δt.*∇ϕ) #! ϕ is not updated! just local var!!
+  phi = lazy_map(-,phi,Δt.*∇ϕ) #! ϕ not defined!!!! uses global ϕ
 
   # Reinitialization step
   if mod(k,each_reinit)==0
     phi = ReinitHJ2d_update(topo,xc,phi,10,scheme="RK2",Δt=0.1*d_max)
+    #! HERE throws an error:
+    # setindex! not defined for Gridap.Arrays.LazyArray (in LevelSetAdvection.jl:302)
   end
 
   global E = 10.0e9 * (phi.<=0) + 1e2*(phi.>0)
@@ -138,7 +149,7 @@ for k in 1:max_iter
     writevtk(Ω,"out/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh)],celldata=["speed"=>Vc,"E"=>E,"phi"=>phi])
   end
 
-  # from https://stackoverflow.com/questions/30789256/is-there-a-way-to-plot-graph-in-julia-while-executing-loops
+  
   pp = plot(compliance, yaxis=:log10)
   display(pp)
   sleep(0.1)
