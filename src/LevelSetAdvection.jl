@@ -1,7 +1,10 @@
+#=
 module LevelSetAdvection
 
 export  get_cellcenter_coordinates, get_cell_diameter,
         upwind2d_step, ReinitHJ2d_update, Signum
+=#
+# check last 'end' in this file
 
 ##############################################
 using Reexport
@@ -266,23 +269,25 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
         ν = 0.001  # smoothing ... just in case
 
         ϕ1 = copy(ϕ)
+
         for iter in 1:niter
-            ϕold = ϕ
+            ϕold = ϕ1
             
             for e in 1:nelem
-
                 # Recovering neighbourhood around element 'e'
                 S,N,W,E = face_to_cells[cell_to_faces[e]] # should be 4 in 2D!
                 ϕxM,ϕxm,ϕyM,ϕym = local_FD_derivatives(ϕ,S,N,W,E,xc)
 
-                ϕ[e] = ϕ[e] - Δt*signψ₀[e]*(Hg(signψ₀[e],ϕxM,ϕxm,ϕyM,ϕym) - 1.0) #+ ν*Δϕ
+                sψ = signψ₀[e]
+                ϕ1[e] -= Δt*sψ*(Hg(sψ,ϕxM,ϕxm,ϕyM,ϕym) - 1.0) #+ ν*Δϕ
             end
 
             if show_errormsg
-                error_ = norm(ϕ - ϕold)/norm(ϕold)
+                error_ = norm(ϕ1 - ϕold)/norm(ϕold)
                 println("error[$(iter)] = ",error_)
             end
         end
+        ϕ = ϕ1
 
     elseif lowercase(scheme) == "rk2"
         #? TVD Runge–Kutta method
@@ -308,7 +313,7 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
                 S,N,W,E = face_to_cells[cell_to_faces[e]] # should be 4 in 2D!
                 ϕxM,ϕxm,ϕyM,ϕym = local_FD_derivatives(ϕ,S,N,W,E,xc)
 
-                ϕ2[e] = ϕ1[e] - Δt*signψ₀[e]*(Hg(signψ₀[e],ϕxM,ϕxm,ϕyM,ϕym) - 1.0)
+                ϕ2[e] = ϕ1[e] - Δt*signψ₀[e]*( Hg(signψ₀[e],ϕxM,ϕxm,ϕyM,ϕym) - 1.0)
             end
             # step 3 in RK2
             ϕ = (ϕ1 + ϕ2)/2.0
@@ -324,4 +329,4 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
     return ϕ
 end
 
-end
+#end # of module

@@ -1,5 +1,7 @@
-using LevelSetAdvection
+#using LevelSetAdvection
+include("../src/LevelSetAdvection.jl")
 using Test
+using Formatting
 
 # test for Compliance
 using Plots
@@ -50,11 +52,11 @@ dΓ = Measure(Γ,degree)
 ϕ = lazy_map(ϕ_,xc)
 
 each_save  = 10
-each_reinit = 2
+each_reinit = 5 #2
 max_iter   = 100
 
 phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
-phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="RK2",Δt=0.1*d_max)
+phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="Upwind",Δt=0.1*d_max)
 
 
 # * == 4. Material setting
@@ -88,7 +90,7 @@ uh = solve(op)
 # * == 5. Compliance speed
 compliance = [] # init
 
-η = 1.0 # 0.2 # volume penalty
+η = 1.0 #0.2 # volume penalty
 area = collect(get_array(∫(1.0)dΩ))
 V(u) = σ(u) ⊙ ε(u)
 Vc = collect(get_array(∫(V(uh))dΩ)) ./ area #! SLOW
@@ -96,11 +98,14 @@ Vc = collect(get_array(∫(V(uh))dΩ)) ./ area #! SLOW
 #restric = @. exp(-abs(Vc)/(2*d_max))
 #restric = @. restric*(restric>0.45)
 #Vc .*= restric
-Vc /= mean(Vc) #maximum(Vc)
-println("[0] min,max(V) = ",minimum(Vc)," , ",maximum(Vc))
-Δt = 0.2*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
+Vc /= maximum(Vc) #mean(Vc) #maximum(Vc)
+printfmtln("[000] min,max(V) = ({:.4e} , {:.4e})",minimum(Vc),maximum(Vc))
+
+Δt = 0.05*d_max #0.2*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
 
 writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh)],celldata=["speed"=>Vc,"E"=>E,"phi"=>phi])
+
+
 
 # * == 6. Optimization Loop
 
@@ -120,16 +125,15 @@ for k in 1:max_iter
   #=
   for i in eachindex(phi)
     phi[i] -= Δt*∇ϕ[i] # this works
-  end =#
+  end 
+  =#
   #ϕ = lazy_map(=,ϕ .- Δt.*∇ϕ) # not working
   #ϕ = lazy_map(-,Δt.*∇ϕ) #! ϕ is not updated! just local var!!
   phi = lazy_map(-,phi,Δt.*∇ϕ) #! ϕ not defined!!!! uses global ϕ
 
   # Reinitialization step
   if mod(k,each_reinit)==0
-    phi = ReinitHJ2d_update(topo,xc,phi,10,scheme="RK2",Δt=0.1*d_max)
-    #! HERE throws an error:
-    # setindex! not defined for Gridap.Arrays.LazyArray (in LevelSetAdvection.jl:302)
+    phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
   end
 
   global E = 10.0e9 * (phi.<=0) + 1e2*(phi.>0)
@@ -141,8 +145,8 @@ for k in 1:max_iter
   global Vc = collect(get_array(∫(V(uh))dΩ)) ./ area
   push!(compliance,sum(l(uh)))
 
-  Vc /= mean(Vc) #maximum(Vc)
-  println("[$(k)] min,max(V) = ",minimum(Vc)," , ",maximum(Vc))
+  Vc /= maximum(Vc) #mean(Vc) #maximum(Vc)
+  printfmtln("[{:03d}] min,max(V) =  ({:.4e} , {:.4e})",k,minimum(Vc),maximum(Vc))
 
   if mod(k,each_save)==0
     println("iter: ",k)
@@ -153,5 +157,7 @@ for k in 1:max_iter
   pp = plot(compliance, yaxis=:log10)
   display(pp)
   sleep(0.1)
+
+  #! Missing control over objective function
 
 end
