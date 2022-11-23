@@ -46,22 +46,40 @@ dΩ = Measure(Ω,degree)
 Γ  = BoundaryTriangulation(model,tags="load")
 dΓ = Measure(Γ,degree)
 
+
+
 # * == 3. Levelset initialization
 #ϕ_(x) = min.((x[1] .- 0.25).^2 .+ (x[2] .- 0.25).^2 - 0.1^2,(x[1] .- 0.1).^2 .+ (x[2] .- 0.1).^2 - 0.08^2)
 ϕ_(x) = -Signum.( sin.(4*2π*x[1]).*cos.(4*4π*x[2]) ,β=2)
 ϕ = lazy_map(ϕ_,xc)
 
 each_save  = 10
-each_reinit = 5 #2
+each_reinit = 2000
 max_iter   = 100
+compliance = [] # init
+η = 0*0.1 #0.2 # volume penalty
+Δt = 0.4*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
+
 
 phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
 phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="Upwind",Δt=0.1*d_max)
 
 
 # * == 4. Material setting
-E = 10e9 * (phi.<=0) + 1e2*(phi.>0)
+E₀ = 1e8
+E₁ = 1e2
+E = E₀ * (phi.<=0) + E₁*(phi.>0)
 ν = 0.3
+
+println(" --- Compliance minimization ---");
+println(" Parameters:")
+println(" E(void,solid) = ($E₀,$E₁)")
+println(" Poisson ratio = $ν")
+println(" Max. number of iterations   : $max_iter")
+println(" Magnitude of Volume penalty : $η")
+println(" Time step                   : $Δt")
+println(" Characteristic mesh size    : $d_max")
+println("\n\n");
 
 function E_to_C(E)
   
@@ -80,81 +98,86 @@ C = lazy_map(E_to_C,E)
 
 
 # Linear elasticity evaluation: First time
-σ(u) = C⊙ε(u)
-a(u,v) = ∫( ε(v) ⊙ σ(u) )dΩ
+function σ(u,E)
+  C = lazy_map(E_to_C,E)
+  return C⊙ε(u)
+end
+a(u,v) = ∫( ε(v) ⊙ σ(u,E) )dΩ
 l(v) = ∫(v⋅g)dΓ
 
-op = AffineFEOperator(a,l,U,V0)
-uh = solve(op)
+function solve_elasticity(E)
+  op = AffineFEOperator(a,l,U,V0)
+  return solve(op)
+end
+
 
 # * == 5. Compliance speed
-compliance = [] # init
-
-η = 1.0 #0.2 # volume penalty
 area = collect(get_array(∫(1.0)dΩ))
-V(u) = σ(u) ⊙ ε(u)
-Vc = collect(get_array(∫(V(uh))dΩ)) ./ area #! SLOW
+
+V(u,E) = σ(u,E) ⊙ ε(u)
+
+Vc(uh,E) = collect(get_array(∫(V(uh,E))dΩ)) ./ area #! SLOW
+
+# * == 6. Solve first iteration
+uh  = solve_elasticity(E) # the very first time
+Vc_ = Vc(uh,E)
+
+push!(compliance,sum(l(uh)))
+
 # limiting speed near the boundary
 #restric = @. exp(-abs(Vc)/(2*d_max))
 #restric = @. restric*(restric>0.45)
 #Vc .*= restric
-Vc /= maximum(Vc) #mean(Vc) #maximum(Vc)
-printfmtln("[000] min,max(V) = ({:.4e} , {:.4e})",minimum(Vc),maximum(Vc))
+Vc_ /= abs(mean(Vc_)) #mean(Vc) #maximum(Vc)
 
-Δt = 0.05*d_max #0.2*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
+printfmtln("[000] min,max(V) = ({:.4e} , {:.4e})",minimum(Vc_),maximum(Vc_))
 
-writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh)],celldata=["speed"=>Vc,"E"=>E,"phi"=>phi])
+writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh,E)],celldata=["speed"=>Vc_,"E"=>E,"phi"=>phi])
 
 
 
 # * == 6. Optimization Loop
 
-push!(compliance,sum(l(uh)))
-
-#= only testing:
-struct my_update <: Map end
-evaluate!(cache,::my_update,x,y)=x-y
-Update = my_update() =#
-
 for k in 1:max_iter
-  #global ϕ # for lazy_map
-  global phi #? this is annoying
-  ∇ϕ = upwind2d_step(topo,xc,phi,Vc.-η)
+  global phi,Vc_ #? this is annoying
+  phi0 = phi
+  ∇ϕ = upwind2d_step(topo,xc,phi,Vc_ .- η)
 
-  #global phi = phi .- Δt*∇ϕ # Scope error in Julia
-  #=
+  
   for i in eachindex(phi)
     phi[i] -= Δt*∇ϕ[i] # this works
   end 
-  =#
+  
   #ϕ = lazy_map(=,ϕ .- Δt.*∇ϕ) # not working
   #ϕ = lazy_map(-,Δt.*∇ϕ) #! ϕ is not updated! just local var!!
-  phi = lazy_map(-,phi,Δt.*∇ϕ) #! ϕ not defined!!!! uses global ϕ
+  #phi = lazy_map(-,phi,Δt.*∇ϕ) 
 
   # Reinitialization step
   if mod(k,each_reinit)==0
-    phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
+    phi = ReinitHJ2d_update(topo,xc,phi,50,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
   end
+#! Sin reinit no actualiza phi ... por que?????
 
-  global E = 10.0e9 * (phi.<=0) + 1e2*(phi.>0)
-  global C = lazy_map(E_to_C,E)
+  Eₕ = E₀ * (phi.<=0) + E₁*(phi.>0)
 
-  global op = AffineFEOperator(a,l,U,V0) # needed to update C into the problem
-  global uh = solve(op)
+  uₕ  = solve_elasticity(Eₕ) # the very first time
+  Vc_ = Vc(uₕ,Eₕ)
+  
+  push!(compliance,sum(l(uₕ)))
 
-  global Vc = collect(get_array(∫(V(uh))dΩ)) ./ area
-  push!(compliance,sum(l(uh)))
+  Vc_ /= abs(mean(Vc_)) #mean(Vc) #maximum(Vc)
+  printfmtln("[{:03d}] min,max(V) =  ({:.4e} , {:.4e})",k,minimum(Vc_),maximum(Vc_))
 
-  Vc /= maximum(Vc) #mean(Vc) #maximum(Vc)
-  printfmtln("[{:03d}] min,max(V) =  ({:.4e} , {:.4e})",k,minimum(Vc),maximum(Vc))
+  @show sum(isnan.(phi))
+  @show norm(phi - phi0)
 
   if mod(k,each_save)==0
     println("iter: ",k)
-    writevtk(Ω,"out/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh)],celldata=["speed"=>Vc,"E"=>E,"phi"=>phi])
+    writevtk(Ω,"out/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uₕ,"epsi"=>ε(uₕ),"sigma"=>σ(uₕ,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi])
   end
 
   
-  pp = plot(compliance, yaxis=:log10)
+  pp = plot(compliance, yaxis=:log10, marker=:circle)
   display(pp)
   sleep(0.1)
 
