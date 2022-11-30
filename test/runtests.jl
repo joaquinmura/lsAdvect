@@ -50,15 +50,15 @@ dΓ = Measure(Γ,degree)
 
 # * == 3. Levelset initialization
 #ϕ_(x) = min.((x[1] .- 0.25).^2 .+ (x[2] .- 0.25).^2 - 0.1^2,(x[1] .- 0.1).^2 .+ (x[2] .- 0.1).^2 - 0.08^2)
-ϕ_(x) = -Signum.( sin.(4*2π*x[1]).*cos.(4*4π*x[2]) ,β=2)
+ϕ_(x) = -Signum.( sin.(4*2π*x[1]).*cos.(5*2π*x[2]) ,β=2)
 ϕ = lazy_map(ϕ_,xc)
 
 each_save  = 10
-each_reinit = 2000
-max_iter   = 100
+each_reinit = 20000
+max_iter   = 200
 compliance = [] # init
-η = 0*0.1 #0.2 # volume penalty
-Δt = 0.4*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
+η = 0.01 #0.2 # volume penalty
+Δt = 0.5*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
 
 
 phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
@@ -67,7 +67,7 @@ phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="Upwind",Δt=0.1*d_max)
 
 # * == 4. Material setting
 E₀ = 1e8
-E₁ = 1e2
+E₁ = 1e5 #1e2
 E = E₀ * (phi.<=0) + E₁*(phi.>0)
 ν = 0.3
 
@@ -102,10 +102,10 @@ function σ(u,E)
   C = lazy_map(E_to_C,E)
   return C⊙ε(u)
 end
-a(u,v) = ∫( ε(v) ⊙ σ(u,E) )dΩ
 l(v) = ∫(v⋅g)dΓ
 
 function solve_elasticity(E)
+  a(u,v) = ∫( ε(v) ⊙ σ(u,E) )dΩ
   op = AffineFEOperator(a,l,U,V0)
   return solve(op)
 end
@@ -128,59 +128,63 @@ push!(compliance,sum(l(uh)))
 #restric = @. exp(-abs(Vc)/(2*d_max))
 #restric = @. restric*(restric>0.45)
 #Vc .*= restric
-Vc_ /= abs(mean(Vc_)) #mean(Vc) #maximum(Vc)
+Vc_ /= maximum(abs.(Vc_)) #mean(Vc) #maximum(Vc)
 
-printfmtln("[000] min,max(V) = ({:.4e} , {:.4e})",minimum(Vc_),maximum(Vc_))
+printfmtln("[000] compliance={:.4e}  || min,max(V) = ({:.4e} , {:.4e})",compliance[end],minimum(Vc_),maximum(Vc_))
 
 writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh,E)],celldata=["speed"=>Vc_,"E"=>E,"phi"=>phi])
 
 
 
-# * == 6. Optimization Loop
+  # * == 6. Optimization Loop
+let phi=phi,Vc_=Vc_
+  for k in 1:max_iter
+    #global phi,Vc_ #? this is annoying
+    phi0 = copy(phi)
+    ∇ϕ = upwind2d_step(topo,xc,phi0,Vc_ .- η)
 
-for k in 1:max_iter
-  #global phi,Vc_ #? this is annoying
-  phi0 = phi
-  ∇ϕ = upwind2d_step(topo,xc,phi,Vc_ .- η)
+    #=
+    for i in eachindex(phi0)
+      phi0[i] -= Δt*∇ϕ[i] # this works
+    end 
+    =#
+    #ϕ = lazy_map(=,ϕ .- Δt.*∇ϕ) # not working
+    #ϕ = lazy_map(-,Δt.*∇ϕ) #! ϕ is not updated! just local var!!
+    phi0 = lazy_map(-,phi0,Δt.*∇ϕ)
 
-  
-  for i in eachindex(phi)
-    phi[i] -= Δt*∇ϕ[i] # this works
-  end 
-  
-  #ϕ = lazy_map(=,ϕ .- Δt.*∇ϕ) # not working
-  #ϕ = lazy_map(-,Δt.*∇ϕ) #! ϕ is not updated! just local var!!
-  #phi = lazy_map(-,phi,Δt.*∇ϕ) 
+    # Reinitialization step
+    if mod(k,each_reinit)==0
+      phi0 = ReinitHJ2d_update(topo,xc,phi0,50,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
+    end
+  #? Reinit hace oscilar a f.obj. ... ???? ==> Revisar!!
+  #! Reinit ensucia a Vc --> oscilaciones muy rápidas!!
+  #! Reinit es LENTO
+  #! Mejorar control del volúmen
 
-  # Reinitialization step
-  if mod(k,each_reinit)==0
-    phi = ReinitHJ2d_update(topo,xc,phi,50,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
+    Eₕ = E₀ * (phi0.<=0) + E₁*(phi0.>0)
+
+    uₕ  = solve_elasticity(Eₕ) # the very first time
+    Vc_ = Vc(uₕ,Eₕ)
+    
+    push!(compliance,sum(l(uₕ)))
+
+    Vc_ /= maximum(abs.(Vc_)) #mean(Vc) #maximum(Vc)
+    printfmtln("[{:03d}] compliance={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,compliance[end],minimum(Vc_),maximum(Vc_))
+
+    
+    if mod(k,each_save)==0
+      println("iter: ",k)
+      writevtk(Ω,"out/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uₕ,"epsi"=>ε(uₕ),"sigma"=>σ(uₕ,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi0])
+    end
+
+    
+    pp = plot(compliance, yaxis=:log10, marker=:circle)
+    display(pp)
+    sleep(0.1)
+
+    #! Missing control over objective function
+    # if Jnew < Jold ==> phi = phi0 (acepted!)
+
+    phi = copy(phi0)
   end
-#! Sin reinit no actualiza phi ... por que?????
-
-  Eₕ = E₀ * (phi.<=0) + E₁*(phi.>0)
-
-  uₕ  = solve_elasticity(Eₕ) # the very first time
-  Vc_ = Vc(uₕ,Eₕ)
-  
-  push!(compliance,sum(l(uₕ)))
-
-  Vc_ /= abs(mean(Vc_)) #mean(Vc) #maximum(Vc)
-  printfmtln("[{:03d}] min,max(V) =  ({:.4e} , {:.4e})",k,minimum(Vc_),maximum(Vc_))
-
-  @show sum(isnan.(phi))
-  @show norm(phi - phi0)
-
-  if mod(k,each_save)==0
-    println("iter: ",k)
-    writevtk(Ω,"out/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uₕ,"epsi"=>ε(uₕ),"sigma"=>σ(uₕ,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi])
-  end
-
-  
-  pp = plot(compliance, yaxis=:log10, marker=:circle)
-  display(pp)
-  sleep(0.1)
-
-  #! Missing control over objective function
-
-end
+end # let
