@@ -139,7 +139,7 @@ writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ
 # * == 6. Optimization Loop
 
 for k in 1:max_iter
-  global phi,Vc_ #? this is annoying
+  #global phi,Vc_ #? this is annoying
   phi0 = phi
   ∇ϕ = upwind2d_step(topo,xc,phi,Vc_ .- η)
 
