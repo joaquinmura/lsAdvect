@@ -54,7 +54,7 @@ dΓ = Measure(Γ,degree)
 ϕ = lazy_map(ϕ_,xc)
 
 each_save  = 10
-each_reinit = 20000
+each_reinit = 3
 max_iter   = 200
 compliance = [] # init
 η = 0.01 #0.2 # volume penalty
@@ -154,7 +154,7 @@ let phi=phi,Vc_=Vc_
 
     # Reinitialization step
     if mod(k,each_reinit)==0
-      phi0 = ReinitHJ2d_update(topo,xc,phi0,50,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
+      phi0 = ReinitHJ2d_update(topo,xc,phi0,5,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
     end
   #? Reinit hace oscilar a f.obj. ... ???? ==> Revisar!!
   #! Reinit ensucia a Vc --> oscilaciones muy rápidas!!

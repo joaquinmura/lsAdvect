@@ -195,7 +195,7 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
     nelem = length(topo.cell_type)
    
     if nelem != length(ϕ)
-        error("Vector ϕ has different length (",length(ϕ),") to number of cells in the mesh (",nelem,")")
+        error("Vector ϕ has a different length (",length(ϕ),") compared to the number of cells in the mesh (",nelem,")")
     end
 
     dim = num_cell_dims(topo)
@@ -207,12 +207,14 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
     end
 
     #TODO: Choose the signum function: TEST required!
+    CFL = 0.3 # later: Let the user choose it
+
     #signψ₀ = sign.(ϕ)
-    signψ₀ = Signum(ϕ)
-    #signψ₀ = SigNum.(ϕ,ϵ=dx)
+    #signψ₀ = Signum(ϕ)
+    signψ₀ = SigNum.(ϕ,ϵ=CFL*0.5)
     #signψ₀ = lazy_map(SigNum(x,ϵ=1.2*dx)->x,ϕ) # not working
 
-    CFL = 0.3 # later: Let the user choose it
+    
 
     if lowercase(scheme) == "upwind"
         #? Upwind scheme
@@ -233,7 +235,7 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
                 if signψ₀[e]<0
                     δ[e] = √(max(min(ϕxM,0)^2,max(ϕxm,0)^2) + max(min(ϕyM,0)^2,max(ϕym,0)^2)) - 1.0 # g⁻ + 1
                 else
-                    δ[e] = √(max(max(ϕxM,0)^2,min(ϕxm,0)^2) + max(max(ϕyM,0)^2,min(ϕym,0)^2)) - 1.0 # g⁺ - 1
+                    δ[e] = √(max(max(ϕxM,0)^2,min(ϕxm,0)^2) + max(max(ϕyM,0)^2,min(ϕym,0)^2)) + 1.0 # g⁺ - 1
                 end
                 δ[e] = δ[e]*signψ₀[e] #- ν*Δϕ  # when applies the smoothed signum
 
