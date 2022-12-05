@@ -58,8 +58,8 @@ each_reinit = 3
 max_iter   = 200
 compliance = [] # init
 η = 0.01 #0.2 # volume penalty
-Δt = 0.5*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
-
+Δt = 0.2*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
+curv_penal = 0.1 # Penalty factor for curvature during the advection.
 
 phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
 phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="Upwind",Δt=0.1*d_max)
@@ -141,7 +141,7 @@ let phi=phi,Vc_=Vc_
   for k in 1:max_iter
     #global phi,Vc_ #? this is annoying
     phi0 = copy(phi)
-    ∇ϕ = upwind2d_step(topo,xc,phi0,Vc_ .- η)
+    ∇ϕ = upwind2d_step(topo,xc,phi0,Vc_ .- η, curvature_penalty = curv_penal)
 
     #=
     for i in eachindex(phi0)
@@ -156,11 +156,6 @@ let phi=phi,Vc_=Vc_
     if mod(k,each_reinit)==0
       phi0 = ReinitHJ2d_update(topo,xc,phi0,5,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
     end
-  #? Reinit hace oscilar a f.obj. ... ???? ==> Revisar!!
-  #! Reinit ensucia a Vc --> oscilaciones muy rápidas!!
-  #! Reinit es LENTO
-  #! Mejorar control del volúmen
-
     Eₕ = E₀ * (phi0.<=0) + E₁*(phi0.>0)
 
     uₕ  = solve_elasticity(Eₕ) # the very first time

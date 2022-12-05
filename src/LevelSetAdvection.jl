@@ -103,6 +103,14 @@ returns ϕx⁺, ϕx⁻, ϕy⁺, ϕy⁻
 """
 function local_FD_derivatives(ϕ,S,N,W,E,xc)
     #? Trick: We repeat to BoundsError when 'e' is on the boundary 
+    #= original structure of N,S,E,W
+     N = [real north , center]
+     S = [center , real south]
+     E = [real east , center]
+     W = [center, real west]
+
+     length(N) = 1 when there is no 'real north' cell. This is why the repetition avoids undefs
+    =#
     S = repeat(S,2) 
     N = repeat(N,2)
     E = repeat(E,2)
@@ -119,6 +127,78 @@ function local_FD_derivatives(ϕ,S,N,W,E,xc)
 end
 
 
+"""
+Estimation of local curvature around {x : ϕ(x)=0}
+
+returning κ = div(n)
+"""
+function local_curvature(ϕ,S,N,W,E)
+    #? Trick: We repeat to BoundsError when 'e' is on the boundary 
+    #= original structure of N,S,E,W
+     N = [real north , center]
+     S = [center , real south]
+     E = [real east , center]
+     W = [center, real west]
+
+     length(N) = 1 when there is no 'real north' cell. This is why the repetition avoids undefs
+    =#
+    NE = Int32[]
+    NW = Int32[]
+    C = S[1] # center
+    ne = length(ϕ) # number of elements
+    if length(N)==1
+        if N[1]>1
+            push!(NE,N[1])
+            push!(NW,max(1,N[1]-1))
+        else
+            push!(NE,min(ne,N[1]+1))
+            push!(NW,N[1])
+        end
+    else
+        push!(NE,min(ne,N[1]+1)) #! maybe this line makes the work of the previous 'if's
+        push!(NW,max(N[1]-1,1))
+    end
+    SE = Int32[]
+    SW = Int32[]
+    if length(S)==1
+        if S[1]>1
+            push!(SE,S[1])
+            push!(SW,max(S[1]-1,1))
+        else
+            push!(SE,min(ne,S[1]+1))
+            push!(SW,S[1])
+        end
+    else
+        push!(SE,S[2]+1)
+        push!(SW,S[2]-1)
+    end
+
+    S = repeat(S,2) 
+    N = repeat(N,2)
+    E = repeat(E,2)
+    W = repeat(W,2)
+    
+
+    # Central finite differences: According to the ordering in Gridap
+    #* Remark: Δx and Δy cancels out here
+
+    ϕx = ϕ[E[1]] - ϕ[W[2]]
+    ϕy = ϕ[N[1]] - ϕ[S[2]]
+    
+    ϕxx = ϕ[E[1]] - 2*ϕ[C] + ϕ[W[2]]
+    ϕyy = ϕ[N[1]] - 2*ϕ[C] + ϕ[S[2]]
+    #@show C,N,S,E,W
+    #@show C,NE,NW,SE,SW
+    ϕxy = 0.25*( ϕ[NE] - ϕ[NW] - ϕ[SE] + ϕ[SW]) #? ϕxy is treated as a length=1 vector ??
+    #! ERROR: BoundsError: attempt to access 16200-element Vector{Float64} at index [Int32[16201]]
+    #@show typeof(ϕ),typeof(ϕx)
+    #@show typeof(ϕxx),typeof(ϕxy),typeof(ϕyy)
+    #@show ϕxy
+    den_κ2 = √(ϕx^2 + ϕy^2)
+    κ = (ϕxx*ϕy^2 - 2*ϕx*ϕy*ϕxy[1] + ϕyy*ϕx^2)/den_κ2^3
+
+    return κ
+end
 
 """
 simple Upwind 2D step
@@ -138,7 +218,7 @@ Gϕ ≈ V|∇ϕ|
 Then, update your function as
 ϕ(n+1) = ϕ(n) - Δt⋅Gϕ(n)
 """
-function upwind2d_step(topo::GridTopology,xc,ϕ::AbstractArray,V::AbstractArray)
+function upwind2d_step(topo::GridTopology,xc,ϕ::AbstractArray,V::AbstractArray;curvature_penalty::Real=0)
 
     # Recover mesh connectivity
     nelem = num_cells(topo) #length(topo.cell_type)
@@ -171,6 +251,16 @@ function upwind2d_step(topo::GridTopology,xc,ϕ::AbstractArray,V::AbstractArray)
         V⁻ = min(V[e],0)
 
         g[e] = V⁺ * g⁺ + V⁻ * g⁻ 
+    end
+
+    if curvature_penalty>0
+        #= We got an extra term, such that
+        ϕ_new = ϕ_old - Δt⋅g + Δt⋅penalty⋅κ = ϕ_old - Δt⋅(g - penalty⋅κ)
+        =#
+        for e in 1:nelem
+            S,N,W,E = face_to_cells[cell_to_faces[e]]
+            g[e] -=  curvature_penalty * local_curvature(ϕ,S,N,W,E)
+        end
     end
 
     return g
@@ -209,9 +299,9 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
     #TODO: Choose the signum function: TEST required!
     CFL = 0.3 # later: Let the user choose it
 
-    #signψ₀ = sign.(ϕ)
+    signψ₀ = sign.(ϕ)
     #signψ₀ = Signum(ϕ)
-    signψ₀ = SigNum.(ϕ,ϵ=CFL*0.5)
+    #signψ₀ = SigNum.(ϕ,ϵ=CFL*0.5)
     #signψ₀ = lazy_map(SigNum(x,ϵ=1.2*dx)->x,ϕ) # not working
 
     
@@ -232,13 +322,22 @@ function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vm
                 S,N,W,E = face_to_cells[cell_to_faces[e]] # should be 4 in 2D!
                 ϕxM,ϕxm,ϕyM,ϕym = local_FD_derivatives(ϕ,S,N,W,E,xc)
 
+                #=
                 if signψ₀[e]<0
-                    δ[e] = √(max(min(ϕxM,0)^2,max(ϕxm,0)^2) + max(min(ϕyM,0)^2,max(ϕym,0)^2)) - 1.0 # g⁻ + 1
+                    δ[e] = √(max(min(ϕxM,0)^2,max(ϕxm,0)^2) + max(min(ϕyM,0)^2,max(ϕym,0)^2)) # g⁻ 
                 else
-                    δ[e] = √(max(max(ϕxM,0)^2,min(ϕxm,0)^2) + max(max(ϕyM,0)^2,min(ϕym,0)^2)) + 1.0 # g⁺ - 1
+                    δ[e] = √(max(max(ϕxM,0)^2,min(ϕxm,0)^2) + max(max(ϕyM,0)^2,min(ϕym,0)^2)) # g⁺ 
                 end
-                δ[e] = δ[e]*signψ₀[e] #- ν*Δϕ  # when applies the smoothed signum
+                δ[e] = signψ₀[e]*(δ[e] - 1.0) #- ν*Δϕ  # when applies the smoothed signum
+                =#
 
+                g⁺ = √(max(min(ϕxM,0)^2,max(ϕxm,0)^2) + max(min(ϕyM,0)^2,max(ϕym,0)^2))
+                g⁻ = √(max(max(ϕxM,0)^2,min(ϕxm,0)^2) + max(max(ϕyM,0)^2,min(ϕym,0)^2))
+
+                V⁺ = max(signψ₀[e],0)  # upwind with V=signψ₀ magnitude
+                V⁻ = min(signψ₀[e],0)
+
+                δ[e] = V⁺ * (g⁺ - 1.0) + V⁻ * (g⁻ - 1.0)
             end
 
             # This is the scheme with Laplacian regularization:
