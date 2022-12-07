@@ -126,79 +126,112 @@ function local_FD_derivatives(ϕ,S,N,W,E,xc)
     return ϕxM,ϕxm,ϕyM,ϕym
 end
 
+"""
+idx2ij(idx,grid_partition)
+
+converts an index 'idx' to a pair (i,j) according to the tuple grid_partition = (ncols,nrows).
+
+Recall that the numbering in Gridap goes from left to right, and then going upwards.
+"""
+function idx2ij(idx,grid_partition)
+    ncols = grid_partition[1]
+    i = ceil.(Int,idx./ncols)
+    j = 1 .+ mod.(idx .- 1,ncols)
+    return i,j
+end
 
 """
-Estimation of local curvature around {x : ϕ(x)=0}
+ij2idx(idx,grid_partition)
 
-returning κ = div(n)
+converts a pair (i,j) to an index 'idx' according to the tuple grid_partition = (ncols,nrows).
+
+Recall that the numbering in Gridap goes from left to right, and then going upwards.
 """
-function local_curvature(ϕ,S,N,W,E)
-    #? Trick: We repeat to BoundsError when 'e' is on the boundary 
-    #= original structure of N,S,E,W
-     N = [real north , center]
-     S = [center , real south]
-     E = [real east , center]
-     W = [center, real west]
+function ij2idx(i,j,grid_partition)
+    j .+ (i .- 1).*grid_partition[1]
+end
 
-     length(N) = 1 when there is no 'real north' cell. This is why the repetition avoids undefs
-    =#
-    NE = Int32[]
-    NW = Int32[]
-    C = S[1] # center
-    ne = length(ϕ) # number of elements
-    if length(N)==1
-        if N[1]>1
-            push!(NE,N[1])
-            push!(NW,max(1,N[1]-1))
-        else
-            push!(NE,min(ne,N[1]+1))
-            push!(NW,N[1])
-        end
-    else
-        push!(NE,min(ne,N[1]+1)) #! maybe this line makes the work of the previous 'if's
-        push!(NW,max(N[1]-1,1))
-    end
-    SE = Int32[]
-    SW = Int32[]
-    if length(S)==1
-        if S[1]>1
-            push!(SE,S[1])
-            push!(SW,max(S[1]-1,1))
-        else
-            push!(SE,min(ne,S[1]+1))
-            push!(SW,S[1])
-        end
-    else
-        push!(SE,S[2]+1)
-        push!(SW,S[2]-1)
-    end
+"""
+global_first_derivatives(Ω::Triangulation,ϕ::AbstractArray)
 
-    S = repeat(S,2) 
-    N = repeat(N,2)
-    E = repeat(E,2)
-    W = repeat(W,2)
+Use central differences and returns ϕ_x and ϕ_y for inner cells, whenever Ω is constructed as CartesianDiscreteModel
+"""
+function global_first_derivatives(Ω::Triangulation,ϕ::AbstractArray)
+    grid_partition = size(Ω.grid.cell_node_ids)
+    nelem = prod(grid_partition)
+
+    ϕx = zeros(Float64,nelem)
+    ϕy = zeros(Float64,nelem)
+
+    # interior points only
+    for j in 2:grid_partition[1]-1
+        for i in 2:grid_partition[2]-1
+            ij = ij2idx(i,j,grid_partition)
+            i1j = ij2idx(i+1,j,grid_partition)
+            ij1 = ij2idx(i,j+1,grid_partition)
+            i_1j = ij2idx(i-1,j,grid_partition)
+            ij_1 = ij2idx(i,j-1,grid_partition)
+
+            ϕx[ij] = (ϕ[i1j] - ϕ[i_1j])/2
+            ϕy[ij] = (ϕ[ij1] - ϕ[ij_1])/2
+        end
+    end
     
+    return ϕx,ϕy
+end
 
-    # Central finite differences: According to the ordering in Gridap
+"""
+global_second_derivatives(Ω::Triangulation,ϕ::AbstractArray)
+
+Use central differences and returns ϕ_xx,ϕ_yy,ϕ_xy for inner cells, whenever Ω is constructed as CartesianDiscreteModel
+"""
+function global_second_derivatives(Ω::Triangulation,ϕ::AbstractArray)
+    grid_partition = size(Ω.grid.cell_node_ids)
+    nelem = prod(grid_partition)
+
+    ϕxx = zeros(Float64,nelem)
+    ϕxy = zeros(Float64,nelem)
+    ϕyy = zeros(Float64,nelem)
+
+    # interior points only
+    for j in 2:grid_partition[1]-1
+        for i in 2:grid_partition[2]-1
+            ij = ij2idx(i,j,grid_partition)
+            i1j = ij2idx(i+1,j,grid_partition)
+            ij1 = ij2idx(i,j+1,grid_partition)
+            i1j1 = ij2idx(i+1,j+1,grid_partition)
+            i_1j = ij2idx(i-1,j,grid_partition)
+            ij_1 = ij2idx(i,j-1,grid_partition)
+            i_1j_1 = ij2idx(i-1,j-1,grid_partition)
+            i1j_1 = ij2idx(i+1,j-1,grid_partition)
+            i_1j1 = ij2idx(i-1,j+1,grid_partition)
+
+            ϕxx[ij] = ϕ[i1j] - 2*ϕ[ij] + ϕ[i_1j]
+            ϕyy[ij] = ϕ[ij1] - 2*ϕ[ij] + ϕ[ij_1]
+            ϕxy[ij] = 0.25*(ϕ[i1j1] - ϕ[i_1j1] - ϕ[i1j_1] + ϕ[i_1j_1])
+        end
+    end
+    
+    return ϕxx,ϕyy,ϕxy
+end
+
+
+"""
+global_curvature(Ω::Triangulation,ϕ)
+
+Estimation of global curvature around levelsets {x : ϕ(x)=const.}. It returns κ = div(n) for each cell in Ω.
+"""
+function global_curvature(Ω::Triangulation,ϕ::AbstractArray)
     #* Remark: Δx and Δy cancels out here
-
-    ϕx = ϕ[E[1]] - ϕ[W[2]]
-    ϕy = ϕ[N[1]] - ϕ[S[2]]
+    ϕx,ϕy = global_first_derivatives(Ω,ϕ)
+    ϕxx,ϕyy,ϕxy = global_second_derivatives(Ω,ϕ)
     
-    ϕxx = ϕ[E[1]] - 2*ϕ[C] + ϕ[W[2]]
-    ϕyy = ϕ[N[1]] - 2*ϕ[C] + ϕ[S[2]]
-    #@show C,N,S,E,W
-    #@show C,NE,NW,SE,SW
-    ϕxy = 0.25*( ϕ[NE] - ϕ[NW] - ϕ[SE] + ϕ[SW]) #? ϕxy is treated as a length=1 vector ??
-    #! ERROR: BoundsError: attempt to access 16200-element Vector{Float64} at index [Int32[16201]]
-    #@show typeof(ϕ),typeof(ϕx)
-    #@show typeof(ϕxx),typeof(ϕxy),typeof(ϕyy)
-    #@show ϕxy
-    den_κ2 = √(ϕx^2 + ϕy^2)
-    κ = (ϕxx*ϕy^2 - 2*ϕx*ϕy*ϕxy[1] + ϕyy*ϕx^2)/den_κ2^3
+    den_κ = .√(ϕx.^2 .+ ϕy.^2) .+ 1e-8 # avoids division by
+    κ = (ϕxx.*ϕy.^2 .- 2.0.*ϕx.*ϕy.*ϕxy .+ ϕyy.*ϕx.^2)./den_κ.^3
 
     return κ
 end
+
 
 """
 simple Upwind 2D step
@@ -218,18 +251,18 @@ Gϕ ≈ V|∇ϕ|
 Then, update your function as
 ϕ(n+1) = ϕ(n) - Δt⋅Gϕ(n)
 """
-function upwind2d_step(topo::GridTopology,xc,ϕ::AbstractArray,V::AbstractArray;curvature_penalty::Real=0)
+function upwind2d_step(Ω::Triangulation,xc,ϕ::AbstractArray,V::AbstractArray;curvature_penalty::Real=0)
 
     # Recover mesh connectivity
-    nelem = num_cells(topo) #length(topo.cell_type)
+    nelem = num_cells(Ω)
    
     if nelem != length(ϕ)
         error("Vector ϕ has different length (",length(ϕ),") to number of cells in the mesh (",nelem,")")
     end
 
-    dim = num_cell_dims(topo)
-    cell_to_faces  = get_faces(topo,dim,dim-1)
-    face_to_cells  = get_faces(topo,dim-1,dim)
+    dim = num_cell_dims(Ω)
+    cell_to_faces  = get_faces(Ω.model.grid_topology,dim,dim-1)
+    face_to_cells  = get_faces(Ω.model.grid_topology,dim-1,dim)
 
     if dim !=2
         error("Sorry: 3D is not implemented yet in `ls_advection.jl`")
@@ -257,9 +290,9 @@ function upwind2d_step(topo::GridTopology,xc,ϕ::AbstractArray,V::AbstractArray;
         #= We got an extra term, such that
         ϕ_new = ϕ_old - Δt⋅g + Δt⋅penalty⋅κ = ϕ_old - Δt⋅(g - penalty⋅κ)
         =#
+        κ = global_curvature(Ω,ϕ)
         for e in 1:nelem
-            S,N,W,E = face_to_cells[cell_to_faces[e]]
-            g[e] -=  curvature_penalty * local_curvature(ϕ,S,N,W,E)
+            g[e] -=  curvature_penalty * κ[e]
         end
     end
 
@@ -275,22 +308,22 @@ solves some time steps for
 
                       ϕ(t=0) = ϕ₀    
 """
-function ReinitHJ2d_update(topo::GridTopology,xc,ϕ::AbstractArray,niter::Int;vmax::AbstractFloat=1.0,scheme="RK2",show_errormsg::Bool=false,Δt::Real=0.1)
+function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vmax::AbstractFloat=1.0,scheme="RK2",show_errormsg::Bool=false,Δt::Real=0.1)
     # Euler & RK2 copyed from 
     # "*On reinitilizing level set functions*", C. Min, J Comput.Phys 299:8 (2010) DOI:10.1016/j.jcp.2009.12.032
 
     #TODO: Check if we are on QUADs (and structured!?)
 
     # Recover mesh connectivity
-    nelem = length(topo.cell_type)
+    nelem = num_cells(Ω)
    
     if nelem != length(ϕ)
         error("Vector ϕ has a different length (",length(ϕ),") compared to the number of cells in the mesh (",nelem,")")
     end
 
-    dim = num_cell_dims(topo)
-    cell_to_faces  = get_faces(topo,dim,dim-1)
-    face_to_cells  = get_faces(topo,dim-1,dim)
+    dim = num_cell_dims(Ω)
+    cell_to_faces  = get_faces(Ω.model.grid_topology,dim,dim-1)
+    face_to_cells  = get_faces(Ω.model.grid_topology,dim-1,dim)
 
     if dim !=2
         error("Sorry: 3D is not implemented yet in `ls_advection.jl`")

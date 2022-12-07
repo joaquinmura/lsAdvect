@@ -62,7 +62,7 @@ compliance = [] # init
 curv_penal = 0.1 # Penalty factor for curvature during the advection.
 
 phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
-phi = ReinitHJ2d_update(topo,xc,phi,20,scheme="Upwind",Δt=0.1*d_max)
+phi = ReinitHJ2d_update(Ω,xc,phi,20,scheme="Upwind",Δt=0.1*d_max)
 
 
 # * == 4. Material setting
@@ -139,31 +139,22 @@ writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ
   # * == 6. Optimization Loop
 let phi=phi,Vc_=Vc_
   for k in 1:max_iter
-    #global phi,Vc_ #? this is annoying
     phi0 = copy(phi)
-    ∇ϕ = upwind2d_step(topo,xc,phi0,Vc_ .- η, curvature_penalty = curv_penal)
-
-    #=
-    for i in eachindex(phi0)
-      phi0[i] -= Δt*∇ϕ[i] # this works
-    end 
-    =#
-    #ϕ = lazy_map(=,ϕ .- Δt.*∇ϕ) # not working
-    #ϕ = lazy_map(-,Δt.*∇ϕ) #! ϕ is not updated! just local var!!
+    ∇ϕ = upwind2d_step(Ω,xc,phi0,Vc_ .- η, curvature_penalty = curv_penal)
     phi0 = lazy_map(-,phi0,Δt.*∇ϕ)
 
     # Reinitialization step
     if mod(k,each_reinit)==0
-      phi0 = ReinitHJ2d_update(topo,xc,phi0,5,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
+      phi0 = ReinitHJ2d_update(Ω,xc,phi0,5,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
     end
     Eₕ = E₀ * (phi0.<=0) + E₁*(phi0.>0)
 
-    uₕ  = solve_elasticity(Eₕ) # the very first time
+    uₕ  = solve_elasticity(Eₕ)
     Vc_ = Vc(uₕ,Eₕ)
     
     push!(compliance,sum(l(uₕ)))
 
-    Vc_ /= maximum(abs.(Vc_)) #mean(Vc) #maximum(Vc)
+    Vc_ /= maximum(abs.(Vc_))
     printfmtln("[{:03d}] compliance={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,compliance[end],minimum(Vc_),maximum(Vc_))
 
     
