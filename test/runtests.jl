@@ -49,26 +49,30 @@ dΓ = Measure(Γ,degree)
 
 
 # * == 3. Levelset initialization
+
+# Iteration parameters
+each_save  = 10    # set the steps to save data
+each_reinit = 3    # select when to apply reinitialization
+max_iter   = 500   # set maximum number of iterations
+compliance = []    # defines array to collect objective function values
+η = 0.04           # volume penalty
+Δt = 0.2*d_max     # Time step
+Δt_min = 1e-5      # minimal time step allowable
+curv_penal = 0     # Penalty factor for curvature during the advection.
+tolremont = 20     # Tolerance to relax descent condition in objective function
+
+# Initial shape
 #ϕ_(x) = min.((x[1] .- 0.25).^2 .+ (x[2] .- 0.25).^2 - 0.1^2,(x[1] .- 0.1).^2 .+ (x[2] .- 0.1).^2 - 0.08^2)
 ϕ_(x) = -Signum.( sin.(4*2π*x[1]).*cos.(5*2π*x[2]) ,β=2)
 ϕ = lazy_map(ϕ_,xc)
-
-each_save  = 10
-each_reinit = 3
-max_iter   = 200
-compliance = [] # init
-η = 0.01 #0.2 # volume penalty
-Δt = 0.2*d_max #/maximum(Vc) #<<<< does not allow 'maximum' over lazy array
-curv_penal = 0.1 # Penalty factor for curvature during the advection.
-
 phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
-phi = ReinitHJ2d_update(Ω,xc,phi,20,scheme="Upwind",Δt=0.1*d_max)
+phi = ReinitHJ2d_update(Ω,xc,phi,10,scheme="Upwind",Δt=0.1*d_max) # the very first time
 
 
 # * == 4. Material setting
 E₀ = 1e8
 E₁ = 1e5 #1e2
-E = E₀ * (phi.<=0) + E₁*(phi.>0)
+E = E₀ * (phi.<=0) + E₁*(phi.>0) # this might be improved with softthresholding or similar ...
 ν = 0.3
 
 println(" --- Compliance minimization ---");
@@ -94,8 +98,6 @@ function E_to_C(E)
   C1212 = μ
   SymFourthOrderTensorValue(C1111,C1112,C1122,C1112,C1212,C2212,C1122,C2212,C2222)
 end
-C = lazy_map(E_to_C,E)
-
 
 # Linear elasticity evaluation: First time
 function σ(u,E)
@@ -116,6 +118,7 @@ area = collect(get_array(∫(1.0)dΩ))
 
 V(u,E) = σ(u,E) ⊙ ε(u)
 
+# Remark: Vc is a `julia` vector array containing cell-averaged evaluations of V(u,E)
 Vc(uh,E) = collect(get_array(∫(V(uh,E))dΩ)) ./ area #! SLOW
 
 # * == 6. Solve first iteration
@@ -125,52 +128,79 @@ Vc_ = Vc(uh,E)
 push!(compliance,sum(l(uh)))
 
 # limiting speed near the boundary
-#restric = @. exp(-abs(Vc)/(2*d_max))
-#restric = @. restric*(restric>0.45)
-#Vc .*= restric
-Vc_ /= maximum(abs.(Vc_)) #mean(Vc) #maximum(Vc)
+restric = @. exp(-abs(Vc_).^2/(2*d_max))
+restric = @. restric*(restric>0.45)
+Vc_ .*= restric
+Vc_ /= maximum(abs.(Vc_)) 
 
 printfmtln("[000] compliance={:.4e}  || min,max(V) = ({:.4e} , {:.4e})",compliance[end],minimum(Vc_),maximum(Vc_))
-
 writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh,E)],celldata=["speed"=>Vc_,"E"=>E,"phi"=>phi])
 
 
 
   # * == 6. Optimization Loop
-let phi=phi,Vc_=Vc_
+let phi=phi,Vc_=Vc_,Δt=Δt
+  ∇ϕ=nothing
+  accepted_step = true
   for k in 1:max_iter
+    # new shape
     phi0 = copy(phi)
-    ∇ϕ = upwind2d_step(Ω,xc,phi0,Vc_ .- η, curvature_penalty = curv_penal)
+    if accepted_step
+      ∇ϕ = upwind2d_step(Ω,xc,phi0,Vc_ .- η, curvature_penalty = curv_penal)
+    end
     phi0 = lazy_map(-,phi0,Δt.*∇ϕ)
 
     # Reinitialization step
     if mod(k,each_reinit)==0
-      phi0 = ReinitHJ2d_update(Ω,xc,phi0,5,scheme="Upwind",Δt=0.1*d_max) # antes: 10 iter
+      phi0 = ReinitHJ2d_update(Ω,xc,phi0,5,scheme="Upwind",Δt=0.1*d_max)
     end
+
+    # new displacement field
     Eₕ = E₀ * (phi0.<=0) + E₁*(phi0.>0)
-
     uₕ  = solve_elasticity(Eₕ)
+
+    new_compliance = sum(l(uₕ))
+
+    # velocity update
     Vc_ = Vc(uₕ,Eₕ)
-    
-    push!(compliance,sum(l(uₕ)))
+    Vc_ /=  maximum(abs.(Vc_))
+    restric = @. exp(-abs(Vc_).^2/(4*d_max))
+    restric = @. restric*(restric>0.4)
+    Vc_ .*= restric
+    Vc_ /=  maximum(abs.(Vc_))
 
-    Vc_ /= maximum(abs.(Vc_))
-    printfmtln("[{:03d}] compliance={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,compliance[end],minimum(Vc_),maximum(Vc_))
+    printfmtln("[{:03d}] compliance={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,new_compliance,minimum(Vc_),maximum(Vc_))
 
-    
-    if mod(k,each_save)==0
-      println("iter: ",k)
+    #* Checking descent
+    if new_compliance < compliance[end] * tolremont/sqrt(k)
+      # Acepted step
+      push!(compliance,new_compliance)
+      phi = copy(phi0) # shape update
+      accepted_step = true
+    else
+      # Rejected step
+      Δt *= 0.9
+      tt = Formatting.format("                     *rejected* actualcompliance={:.4e} :: decreasing Δt to {:.4e}",compliance[end],Δt)
+      printstyled(tt,color=:cyan)
+      println()
+      accepted_step = false
+    end
+
+    if mod(k,each_save)==0 && accepted_step
+      printstyled("iter: ",k,bold=true,color=:yellow)
+      println()
       writevtk(Ω,"out/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uₕ,"epsi"=>ε(uₕ),"sigma"=>σ(uₕ,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi0])
     end
 
-    
     pp = plot(compliance, yaxis=:log10, marker=:circle)
     display(pp)
     sleep(0.1)
 
-    #! Missing control over objective function
-    # if Jnew < Jold ==> phi = phi0 (acepted!)
-
-    phi = copy(phi0)
+    # The End
+    if Δt < Δt_min
+      println(" Convergence achieved!")
+      break
+    end
+    
   end
 end # let

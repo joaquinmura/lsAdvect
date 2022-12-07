@@ -221,13 +221,18 @@ global_curvature(Ω::Triangulation,ϕ)
 
 Estimation of global curvature around levelsets {x : ϕ(x)=const.}. It returns κ = div(n) for each cell in Ω.
 """
-function global_curvature(Ω::Triangulation,ϕ::AbstractArray)
+function global_curvature(Ω::Triangulation,ϕ::AbstractArray;add_limiter::Bool=false)
     #* Remark: Δx and Δy cancels out here
     ϕx,ϕy = global_first_derivatives(Ω,ϕ)
     ϕxx,ϕyy,ϕxy = global_second_derivatives(Ω,ϕ)
     
-    den_κ = .√(ϕx.^2 .+ ϕy.^2) .+ 1e-8 # avoids division by
-    κ = (ϕxx.*ϕy.^2 .- 2.0.*ϕx.*ϕy.*ϕxy .+ ϕyy.*ϕx.^2)./den_κ.^3
+    den_κ = @. √(ϕx^2 + ϕy^2) + 1e-5 # avoids division by
+    κ = @. (ϕxx*ϕy^2 - 2.0*ϕx*ϕy*ϕxy + ϕyy*ϕx^2)/den_κ^3
+
+    if add_limiter
+        # set κ between ±100
+        κ = max.(-100,min.(100,κ))
+    end
 
     return κ
 end
@@ -290,7 +295,7 @@ function upwind2d_step(Ω::Triangulation,xc,ϕ::AbstractArray,V::AbstractArray;c
         #= We got an extra term, such that
         ϕ_new = ϕ_old - Δt⋅g + Δt⋅penalty⋅κ = ϕ_old - Δt⋅(g - penalty⋅κ)
         =#
-        κ = global_curvature(Ω,ϕ)
+        κ = global_curvature(Ω,ϕ,add_limiter=true)
         for e in 1:nelem
             g[e] -=  curvature_penalty * κ[e]
         end
@@ -330,14 +335,10 @@ function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vma
     end
 
     #TODO: Choose the signum function: TEST required!
-    CFL = 0.3 # later: Let the user choose it
-
     signψ₀ = sign.(ϕ)
     #signψ₀ = Signum(ϕ)
-    #signψ₀ = SigNum.(ϕ,ϵ=CFL*0.5)
-    #signψ₀ = lazy_map(SigNum(x,ϵ=1.2*dx)->x,ϕ) # not working
-
-    
+    #signψ₀ = SigNum.(ϕ,ϵ=CFL*0.1)
+       
 
     if lowercase(scheme) == "upwind"
         #? Upwind scheme
