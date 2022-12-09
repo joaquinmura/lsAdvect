@@ -52,9 +52,10 @@ dΓ = Measure(Γ,degree)
 
 # Iteration parameters
 each_save  = 10    # set the steps to save data
-each_reinit = 3    # select when to apply reinitialization
-max_iter   = 1000   # set maximum number of iterations
+each_reinit = 5    # select when to apply reinitialization
+max_iter   = 4000   # set maximum number of iterations
 compliance = []    # defines array to collect objective function values
+volume     = []
 η = 0.04           # volume penalty
 Δt = 0.3*d_max     # Time step
 Δt_min = 1e-5      # minimal time step allowable
@@ -172,12 +173,20 @@ let phi=phi,Vc_=Vc_,Δt=Δt
     # normalization
     Vc_ /=  maximum(abs.(Vc_))
 
-    printfmtln("[{:03d}] compliance={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,new_compliance,minimum(Vc_),maximum(Vc_))
+    # Volume computation
+    vol = sum(∫(phi0.<=0)dΩ)
+
+    printfmtln("[{:03d}] compliance={:.4e} | vol={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,new_compliance,vol,minimum(Vc_),maximum(Vc_))
 
     #* Checking descent
     if new_compliance < compliance[end] * (1 + tolremont/sqrt(k/2))
       # Acepted step
       push!(compliance,new_compliance)
+      push!(volume,vol)      
+
+      #? Slight acceleration
+      # Δt *= 1.0025
+
       phi = copy(phi0) # shape update
       accepted_step = true
     else
