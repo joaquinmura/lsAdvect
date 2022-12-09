@@ -49,6 +49,16 @@ function Hg(sgnϕ,a,b,c,d)
 end
 
 
+"""
+Smoothed step function
+    sH(x;slope::Real=10)
+
+"""
+function sH(x;slope::Real=100)
+    k = π*slope/2
+    return @. (1 + tanh(k*x))/2
+end
+
 
 """
 Get cell centered coordinates
@@ -335,9 +345,9 @@ function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vma
     end
 
     #TODO: Choose the signum function: TEST required!
-    signψ₀ = sign.(ϕ)
+    #signψ₀ = sign.(ϕ)
     #signψ₀ = Signum(ϕ)
-    #signψ₀ = SigNum.(ϕ,ϵ=CFL*0.1)
+    signψ₀ = SigNum.(ϕ,ϵ=0.1)
        
 
     if lowercase(scheme) == "upwind"

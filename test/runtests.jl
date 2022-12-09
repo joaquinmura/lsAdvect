@@ -53,10 +53,10 @@ dΓ = Measure(Γ,degree)
 # Iteration parameters
 each_save  = 10    # set the steps to save data
 each_reinit = 3    # select when to apply reinitialization
-max_iter   = 500   # set maximum number of iterations
+max_iter   = 1000   # set maximum number of iterations
 compliance = []    # defines array to collect objective function values
 η = 0.04           # volume penalty
-Δt = 0.2*d_max     # Time step
+Δt = 0.3*d_max     # Time step
 Δt_min = 1e-5      # minimal time step allowable
 curv_penal = 0     # Penalty factor for curvature during the advection.
 tolremont = 20     # Tolerance to relax descent condition in objective function
@@ -156,23 +156,26 @@ let phi=phi,Vc_=Vc_,Δt=Δt
     end
 
     # new displacement field
-    Eₕ = E₀ * (phi0.<=0) + E₁*(phi0.>0)
+    #Eₕ = E₀ * (phi0.<=0) + E₁*(phi0.>0)
+    Eₕ = E₀*(1 .- sH(phi0)) + E₁*sH(phi0)
     uₕ  = solve_elasticity(Eₕ)
 
     new_compliance = sum(l(uₕ))
 
     # velocity update
-    Vc_ = Vc(uₕ,Eₕ)
+    Vc_ = Vc(uₕ,Eₕ) # 1st eval
+    #= apply restriction around {ϕ(x)=0}
     Vc_ /=  maximum(abs.(Vc_))
-    restric = @. exp(-abs(Vc_).^2/(4*d_max))
+    restric = @. exp(-abs(Vc_).^2/(6*d_max^2))
     restric = @. restric*(restric>0.4)
-    Vc_ .*= restric
+    Vc_ .*= restric =#
+    # normalization
     Vc_ /=  maximum(abs.(Vc_))
 
     printfmtln("[{:03d}] compliance={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,new_compliance,minimum(Vc_),maximum(Vc_))
 
     #* Checking descent
-    if new_compliance < compliance[end] * tolremont/sqrt(k)
+    if new_compliance < compliance[end] * (1 + tolremont/sqrt(k/2))
       # Acepted step
       push!(compliance,new_compliance)
       phi = copy(phi0) # shape update
