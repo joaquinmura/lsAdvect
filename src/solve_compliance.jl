@@ -5,22 +5,39 @@ using Formatting
 using Plots
 gr()
 
-Base.@kwdef mutable struct ShapeOptParams
-    outname::String = "output"
-    boundary_labels
-    dirichlet_tags
-    neumann_tags
-    uD::VectorValue      # set later as list of VectorValues
-    g::VectorValue       # same as above
-    masked_region        # vector array
-    each_save::Int = 10  # set the steps to save data
-    each_reinit::Int = 5 # select when to apply reinitialization
-    max_iter::Int = 4000 # set maximum number of iterations
-    vol_penal::Real = 0.04 # volume penalty
-    Δt::Real = 0.025     # Time step
-    Δt_min::Real = 1e-5  # minimal time step allowable
-    curv_penal::Real = 0 # Penalty factor for curvature during the advection.
-    tolremont::Int = 20  # Tolerance to relax descent condition in objective function
+mutable struct ShapeOptParams
+    outname::String
+    boundary_labels::FaceLabeling
+    dirichlet_tags::Vector{String}
+    neumann_tags ::Vector{String}
+    uD::Vector{Function}      # set later as list of VectorValues
+    g::Vector{Function}       # same as above
+    masked_region::Int        #! TEST vector array 
+    each_save::Int       # set the steps to save data
+    each_reinit::Int     # select when to apply reinitialization
+    max_iter::Int        # set maximum number of iterations
+    vol_penal::Real      # volume penalty
+    Δt::Real             # Time step
+    Δt_min::Real         # minimal time step allowable
+    curv_penal::Real     # Penalty factor for curvature during the advection.
+    tolremont::Int       # Tolerance to relax descent condition in objective function
+
+    function ShapeOptParams(outname="output", each_save=10,
+                each_reinit=5, max_iter=4000, vol_penal=0.03,
+                Δt=7e-3, Δt_min=1e-5, curv_penal=0, tolremont=20)
+        shapeOptParams = new()
+        shapeOptParams.outname = outname
+        shapeOptParams.each_save = each_save
+        shapeOptParams.each_reinit = each_reinit
+        shapeOptParams.max_iter = max_iter
+        shapeOptParams.vol_penal = vol_penal
+        shapeOptParams.Δt = Δt
+        shapeOptParams.Δt_min = Δt_min
+        shapeOptParams.curv_penal = curv_penal
+        shapeOptParams.tolremont = tolremont
+        return shapeOptParams
+    end
+
 end
 
 
@@ -31,8 +48,8 @@ E[1] for phi<0 and E[2] otherwise
 function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         
     # auxiliars
-    println("* Set of solutions will be stored into the $outname folder.")
-    mkpath(String)
+    println("* Set of solutions will be stored into the $(sop.outname) folder.")
+    mkpath(sop.outname)
 
     # and get some info
     #n      = num_cells(Ω)
@@ -59,11 +76,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
     # * == 3. Levelset initialization
 
-    # Iteration parameters
-
-
-    # Initial shape
-
+    # Formatting initial shape
     phi = ReinitHJ2d_update(Ω,xc,phi,10,scheme="Upwind",Δt=0.1*d_max) # the very first time
 
 
@@ -81,31 +94,30 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     println(" Characteristic mesh size    : $d_max")
     println("\n\n");
 
-    function E_to_C(E)
-    
-    λ = (E * ν)/((1+ν)*(1-2*ν))
-    μ = E/(2*(1+ν))
+    function E_to_C(E;ν=νₕ)
+        λ = (E * ν)/((1+ν)*(1-2*ν))
+        μ = E/(2*(1+ν))
 
-    C1111 = 2.0*μ + λ
-    C1122 = λ
-    C1112 = 0.0
-    C2222 = 2.0*μ + λ
-    C2212 = 0.0
-    C1212 = μ
-    SymFourthOrderTensorValue(C1111,C1112,C1122,C1112,C1212,C2212,C1122,C2212,C2222)
+        C1111 = 2.0*μ + λ
+        C1122 = λ
+        C1112 = 0.0
+        C2222 = 2.0*μ + λ
+        C2212 = 0.0
+        C1212 = μ
+        SymFourthOrderTensorValue(C1111,C1112,C1122,C1112,C1212,C2212,C1122,C2212,C2222)
     end
 
     # Linear elasticity evaluation: First time
     function σ(u,E)
-    C = lazy_map(E_to_C,E)
-    return C⊙ε(u)
+        C = lazy_map(E_to_C,E)
+        return C⊙ε(u)
     end
     l(v) = ∫(v⋅g)dΓ
 
     function solve_elasticity(E)
-    a(u,v) = ∫( ε(v) ⊙ σ(u,E) )dΩ
-    op = AffineFEOperator(a,l,U,V0)
-    return solve(op)
+        a(u,v) = ∫( ε(v) ⊙ σ(u,E) )dΩ
+        op = AffineFEOperator(a,l,U,V0)
+        return solve(op)
     end
 
 
@@ -118,10 +130,10 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     Vc(uh,E) = collect(get_array(∫(V(uh,E))dΩ)) ./ area #! SLOW
 
     # * == 6. Solve first iteration
-    uh  = solve_elasticity(E) # the very first time
-    Vc_ = Vc(uh,E)
+    uh  = solve_elasticity(Eₕ) # the very first time
+    Vc_ = Vc(uh,Eₕ)
 
-    vol = sum(∫(phi0.<=0)dΩ)
+    vol = sum(∫(phi.<=0)dΩ)
     push!(compliance,sum(l(uh)))
     push!(volume,vol)      
 
@@ -129,12 +141,12 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     Vc_ /= maximum(abs.(Vc_)) 
 
     printfmtln("[000] compliance={:.4e}  || min,max(V) = ({:.4e} , {:.4e})",compliance[end],minimum(Vc_),maximum(Vc_))
-    writevtk(Ω,"out/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh,E)],celldata=["speed"=>Vc_,"E"=>E,"phi"=>phi])
+    writevtk(Ω,sop.outname*"/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi])
 
 
 
     # * == 6. Optimization Loop
-    #let phi=phi,Vc_=Vc_,Δt=Δt
+    let phi=phi,Vc_=Vc_
     ∇ϕ=nothing
     accepted_step = true
     for k in 1:sop.max_iter
@@ -146,7 +158,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         phi0 = lazy_map(-,phi0,sop.Δt .* ∇ϕ)
 
         # Reinitialization step
-        if mod(k,each_reinit)==0
+        if mod(k,sop.each_reinit)==0
         phi0 = ReinitHJ2d_update(Ω,xc,phi0,5,scheme="Upwind",Δt=0.1*d_max)
         end
 
@@ -166,7 +178,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         printfmtln("[{:03d}] compliance={:.4e} | vol={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,new_compliance,vol,minimum(Vc_),maximum(Vc_))
 
         #* Checking descent
-        if new_compliance < compliance[end] * (1 + tolremont/sqrt(k/2))
+        if new_compliance < compliance[end] * (1 + sop.tolremont/sqrt(k/2))
             # Acepted step
             push!(compliance,new_compliance)
             push!(volume,vol)      
@@ -185,10 +197,10 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
             accepted_step = false
             end
 
-        if mod(k,each_save)==0 && accepted_step
+        if mod(k,sop.each_save)==0 && accepted_step
         printstyled("iter: ",k,bold=true,color=:yellow)
         println()
-        writevtk(Ω,"out/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uₕ,"epsi"=>ε(uₕ),"sigma"=>σ(uₕ,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi0])
+        writevtk(Ω,sop.outname*"/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uₕ,"epsi"=>ε(uₕ),"sigma"=>σ(uₕ,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi0])
         end
 
         pp = plot(compliance, yaxis=:log10, marker=:circle)
@@ -202,5 +214,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         end
         
     end
-    #end # let
+    end # let
+
+    return compliance,volume
 end
