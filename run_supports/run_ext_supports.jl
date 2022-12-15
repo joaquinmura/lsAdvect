@@ -17,8 +17,8 @@ uD(x) = VectorValue(0.0,0.0)
 g(x) = VectorValue(0.0,-10*(x[2]>=0.22)*(x[2]<=0.28))
 
 xc = get_cellcenter_coordinates(Ω)
-
-mask = 1 # test
+X = [xc[k][1] for k in 1:length(xc)]
+Y = [xc[k][2] for k in 1:length(xc)]
 
 opts = ShapeOptParams()
 opts.outname = "out_01"
@@ -27,8 +27,9 @@ opts.dirichlet_tags = dir_tags
 opts.neumann_tags = neu_tags
 opts.uD = [uD]
 opts.g = [g]
-opts.masked_region = mask
+opts.masked_region = @. convert(Float64,√((X - 0.5)^2 + (Y - 0.25)^2) <= 0.1)
 
+# remark: optimization region is when mask = 0. Other values may have different usages
 
 ϕ_(x) = -Signum.( sin.(4*2π*x[1]).*cos.(5*2π*x[2]) ,β=2)
 ϕ = lazy_map(ϕ_,xc)

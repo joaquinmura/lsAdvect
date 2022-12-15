@@ -14,12 +14,62 @@ using Reexport
 @reexport using Gridap.TensorValues
 ##############################################
 
+mutable struct ShapeOptParams
+    outname::String
+    boundary_labels::FaceLabeling
+    dirichlet_tags::Vector{String}
+    neumann_tags ::Vector{String}
+    uD::Vector{Function}      # set later as list of VectorValues
+    g::Vector{Function}       # same as above
+    masked_region::AbstractArray # set masked region element-wise
+    each_save::Int       # set the steps to save data
+    each_reinit::Int     # select when to apply reinitialization
+    max_iter::Int        # set maximum number of iterations
+    vol_penal::Real      # volume penalty
+    Δt::Real             # Time step
+    Δt_min::Real         # minimal time step allowable
+    curv_penal::Real     # Penalty factor for curvature during the advection.
+    tolremont::Int       # Tolerance to relax descent condition in objective function
+
+    function ShapeOptParams(outname="output", each_save=10,
+                each_reinit=3, max_iter=4000, vol_penal=0.03,
+                Δt=7e-3, Δt_min=1e-5, curv_penal=0, tolremont=20)
+        shapeOptParams = new()
+        shapeOptParams.outname = outname
+        shapeOptParams.each_save = each_save
+        shapeOptParams.each_reinit = each_reinit
+        shapeOptParams.max_iter = max_iter
+        shapeOptParams.vol_penal = vol_penal
+        shapeOptParams.Δt = Δt
+        shapeOptParams.Δt_min = Δt_min
+        shapeOptParams.curv_penal = curv_penal
+        shapeOptParams.tolremont = tolremont
+        return shapeOptParams
+    end
+
+end
+
+
+
+
 # Auxiliar functions
 Signum(x;β=2.0) = tanh.(β.*x)    
 SigNum(x;ϵ=0.1) = x/√(x^2 + ϵ^2) 
 
-Sₑ(ϕ;ϵ=0.1) = 0.5/ϵ.*(1 .+ cos.(π*ϕ/ϵ)).*(abs.(ϕ).<=ϵ)
-Hₑ(ϕ;ϵ=0.1) = 1.0.*(ϕ.>ϵ) .+ 0.5*(1 .+ ϕ/ϵ .+ 1/ϵ*sin.(π*ϕ/ϵ)).*(abs.(ϕ).<=ϵ)
+#Sₑ(ϕ;ϵ=0.1) = 0.5/ϵ.*(1 .+ cos.(π*ϕ/ϵ)).*(abs.(ϕ).<=ϵ)
+#Hₑ(ϕ;ϵ=0.1) = @. 1.0*(ϕ>ϵ) + 0.5*(1 + ϕ/ϵ + 1/ϵ*sin(π*ϕ/ϵ))*(abs(ϕ)<=ϵ)
+
+limiter(x;h::Real=1) = @. x*(abs(x)<=h) + h*(x>h) - h*(x<-h)
+
+
+"""
+Extended regularization
+"""
+function extended_regularization(Ω::Triangulation,j::Function;ϵ::Real=1e-3)
+    # ∫ ϵ^2*∇V⋅∇ϕ dΩ = -∫ χ_{ϕ=0} j(u)ϕ dΩ
+    #TODO 
+end
+
 
 
 """
@@ -77,6 +127,20 @@ function get_cellcenter_coordinates(Ω::Triangulation)
     return xc
 end
 
+"""
+For instance, works with cartesian grids
+"""
+function get_estimated_domain_diameter(Ω::Triangulation)
+    # list with vertex coordinates
+    xy = get_vertex_coordinates(Ω.model.grid_topology)
+
+    # get "corner" nodes from cartesian grid, assuming cartesian ordering
+    node1 = minimum(get_cell_node_ids(Ω)[1])
+    node2 = maximum(get_cell_node_ids(Ω)[end])
+    # Rem: this should be closed to diagonal corners ... but cannot be assessed!
+
+    return norm(xy[node2] - xy[node1])
+end
 
 
 """

@@ -5,45 +5,41 @@ using Formatting
 using Plots
 gr()
 
-mutable struct ShapeOptParams
-    outname::String
-    boundary_labels::FaceLabeling
-    dirichlet_tags::Vector{String}
-    neumann_tags ::Vector{String}
-    uD::Vector{Function}      # set later as list of VectorValues
-    g::Vector{Function}       # same as above
-    masked_region::Int        #! TEST vector array 
-    each_save::Int       # set the steps to save data
-    each_reinit::Int     # select when to apply reinitialization
-    max_iter::Int        # set maximum number of iterations
-    vol_penal::Real      # volume penalty
-    Δt::Real             # Time step
-    Δt_min::Real         # minimal time step allowable
-    curv_penal::Real     # Penalty factor for curvature during the advection.
-    tolremont::Int       # Tolerance to relax descent condition in objective function
-
-    function ShapeOptParams(outname="output", each_save=10,
-                each_reinit=5, max_iter=4000, vol_penal=0.03,
-                Δt=7e-3, Δt_min=1e-5, curv_penal=0, tolremont=20)
-        shapeOptParams = new()
-        shapeOptParams.outname = outname
-        shapeOptParams.each_save = each_save
-        shapeOptParams.each_reinit = each_reinit
-        shapeOptParams.max_iter = max_iter
-        shapeOptParams.vol_penal = vol_penal
-        shapeOptParams.Δt = Δt
-        shapeOptParams.Δt_min = Δt_min
-        shapeOptParams.curv_penal = curv_penal
-        shapeOptParams.tolremont = tolremont
-        return shapeOptParams
-    end
-
-end
-
-
 
 """
-E[1] for phi<0 and E[2] otherwise
+    solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
+
+Minimal compliance solver using Levelsets and Shape Sensitivity Analysis
+
+This function solves
+
+       min      ∫ f⋅u dΩ
+     Ω ∈ U_ad
+
+        s.t.   -div σ = f   in Ω,
+                    u = uD  on Γd (Dirichlet)
+                   σn = g   on Γn (Neumann)
+                   σn = 0   on ∂Ω(Γd ∪ Γn)
+
+For this problem, the domain Ω is embeeded into a larger one D, where 
+Ω = { x ∈ D : ϕ(x)<0 }
+
+being ϕ the levelset function for the implicit location of Ω. That function allows
+to transport Ω via a Hamilton-Jacobi equation, in order to construct a minimizing sequence 
+for the shape optimization problem.
+
+
+Usage:
+compliance,volume = solve_compliance(D::Triangulation,phi::Vector,E,ν,sop::ShapeOptParams)
+
+where the domain D is defined using the `Gridap` finite element package, and the element-wise 
+vector phi is such that the Young modulus for each subdomain corresponds to
+           {  E[1] when phi(x)<0       
+    E(x) = {  E[2] otherwise
+
+The output is given by two vectors containing the values of the objective function (compliance)
+and the volume, as the iterations runs.
+
 """
 function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         
@@ -53,15 +49,33 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
     # and get some info
     #n      = num_cells(Ω)
-    #nv     = num_vertices(Ω) 
+    #nv     = num_vertices(Ω.model) 
     dim        = num_dims(Ω) 
     compliance = []    # defines array to collect objective function values
     volume     = []
+
+    reinit_iter = [10,20] # Amount of reinitialization steps
+    reinit_iter_thres = 400 # iteration that triggers reinit_iter[2] instead of reinit_iter[1]
 
     # extracts coordinates from the cell centers
     xc = get_cellcenter_coordinates(Ω)
     d_max = maximum(get_cell_diameter(Ω))
 
+    domain_diameter = get_estimated_domain_diameter(Ω) # for phi limiter
+
+    # defines masked region, if any
+    mask_reg = ones(size(phi))
+    if length(sop.masked_region)>0
+        printstyled("Considering a masked region\n",bold=true,color=:blue)
+        global mask_reg = convert.(Float64,abs.(sop.masked_region) .< 1e-3)
+        if length(mask_reg)<=1
+            @show length(mask_reg)
+            error("Working domain is empty!. Check 'masked_region' parameter.")
+        end
+    end
+    opt_region = sH(2*(mask_reg .- 0.5),slope=80)
+
+    # Finite Elements setting
     order = 1
     reffe = ReferenceFE(lagrangian,VectorValue{dim,Float64},order)
     V0 = TestFESpace(model,reffe, conformity=:H1, dirichlet_tags=sop.dirichlet_tags) #  dirichlet_masks=[(true,false), (true,true)])
@@ -69,7 +83,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     U  = TrialFESpace(V0,sop.uD)
     degree = 2*order
     dΩ = Measure(Ω,degree)
-    Γ  = BoundaryTriangulation(model,tags=sop.neumann_tags) #! model --> Ω 
+    Γ  = BoundaryTriangulation(Ω.model,tags=sop.neumann_tags)
     dΓ = Measure(Γ,degree)
 
 
@@ -77,11 +91,11 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     # * == 3. Levelset initialization
 
     # Formatting initial shape
-    phi = ReinitHJ2d_update(Ω,xc,phi,10,scheme="Upwind",Δt=0.1*d_max) # the very first time
+    phi = ReinitHJ2d_update(Ω,xc,phi,maximum(reinit_iter),scheme="Upwind",Δt=0.1*d_max) # the very first time
 
 
     # * == 4. Material setting
-    Eₕ = E[1]*(1 .- sH(phi)) + E[2]*sH(phi)
+    Eₕ = E[1]*(1 .- sH(phi,slope=80)) + E[2]*sH(phi,slope=80)
     νₕ = ν[1]
 
     println(" --- Compliance minimization ---");
@@ -124,10 +138,10 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     # * == 5. Compliance speed
     area = collect(get_array(∫(1.0)dΩ))
 
-    V(u,E) = σ(u,E) ⊙ ε(u)
+    V(u,E) = σ(u,E) ⊙ ε(u) 
 
     # Remark: Vc is a `julia` vector array containing cell-averaged evaluations of V(u,E)
-    Vc(uh,E) = collect(get_array(∫(V(uh,E))dΩ)) ./ area #! SLOW
+    Vc(uh,E) = opt_region .* collect( get_array(∫(V(uh,E))dΩ)) ./ area #! SLOW
 
     # * == 6. Solve first iteration
     uh  = solve_elasticity(Eₕ) # the very first time
@@ -141,7 +155,10 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     Vc_ /= maximum(abs.(Vc_)) 
 
     printfmtln("[000] compliance={:.4e}  || min,max(V) = ({:.4e} , {:.4e})",compliance[end],minimum(Vc_),maximum(Vc_))
-    writevtk(Ω,sop.outname*"/elasticity_000",cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi])
+    writevtk(Ω,sop.outname*"/elasticity_000",
+        cellfields=["uh"=>uh,"epsi"=>ε(uh),"sigma"=>σ(uh,Eₕ)],
+        celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi,"opt_region"=>opt_region]
+    )
 
 
 
@@ -153,17 +170,21 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         # new shape
         phi0 = copy(phi)
         if accepted_step
-        ∇ϕ = upwind2d_step(Ω,xc,phi0,Vc_ .- sop.vol_penal, curvature_penalty = sop.curv_penal)
+            η = sop.vol_penal .* opt_region
+            ∇ϕ = upwind2d_step(Ω,xc,phi0,Vc_ .- η, curvature_penalty = sop.curv_penal)
         end
         phi0 = lazy_map(-,phi0,sop.Δt .* ∇ϕ)
 
         # Reinitialization step
         if mod(k,sop.each_reinit)==0
-        phi0 = ReinitHJ2d_update(Ω,xc,phi0,5,scheme="Upwind",Δt=0.1*d_max)
+            riter = reinit_iter[1]*(k<reinit_iter_thres) + reinit_iter[2]*(k>=reinit_iter_thres)
+            phi0 = ReinitHJ2d_update(Ω,xc,phi0,riter,scheme="Upwind",Δt=0.25*d_max)
+            phi0 = limiter(phi0,h=domain_diameter)
         end
 
         # new displacement field
-        Eₕ = E[1]*(1 .- sH(phi0)) + E[2]*sH(phi0)
+        Eₕ = E[1]*(1 .- sH(phi0,slope=80)) + E[2]*sH(phi0,slope=80)
+        #Eₕ = E[1]*(1 .- Hₑ(phi0)) + E[2]*Hₑ(phi0) # bad
         uₕ  = solve_elasticity(Eₕ)
 
         new_compliance = sum(l(uₕ))
@@ -184,7 +205,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
             push!(volume,vol)      
 
             #? Slight acceleration
-            # Δt *= 1.0025
+            sop.Δt *= 1 + 0.8*log(1 +k*0.5)/7*0.005 # goes from 1.0 to 1.0035 in 2200 iterations
 
             phi = copy(phi0) # shape update
             accepted_step = true
