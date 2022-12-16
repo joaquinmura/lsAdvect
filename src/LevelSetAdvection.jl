@@ -578,12 +578,8 @@ function velocity_regularization(Ω::Triangulation,phi,velo;thres::Real=0.75)
     a(v,ϕ) = ∫(∇(v)⋅∇(ϕ))dΩ + ∫((1e12.*delta_reg)*v*ϕ)dΩ
     #l(ϕ) = ∫(velo*ϕ)dΣ
 
-@show typeof(phi)
-    @show typeof(delta_reg)
-    @show typeof(velo)
+    rhs = (1e12.*delta_reg)*velo 
 
-    rhs = (1e12.*delta_reg)*velo # 2nd or 3th iter ... no matching method ... change type of rhs !!!
-    @show typeof(rhs)
     l(ϕ) = ∫(rhs*ϕ)dΩ
 
     op = AffineFEOperator(a,l,U,V)

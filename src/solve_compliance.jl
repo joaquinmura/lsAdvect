@@ -151,7 +151,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
     # * == 6. Solve first iteration
     uh  = solve_elasticity(Eₕ) # the very first time
-    Vc_ = Vc(uh,Eₕ,phi)
+    Vc_ = opt_region .* Vc(uh,Eₕ,phi)
 
     vol = sum(∫(phi.<=0)dΩ)
     push!(compliance,sum(l(uh)))
@@ -197,14 +197,12 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
         # velocity update
         #phi0 = vec(collect(get_array(phi0))) # convert LazyArray to Vector{Float64}
-        Vc_ = Vc(uₕ,Eₕ,phi0) 
+        Vc_ = opt_region .* Vc(uₕ,Eₕ,phi0) 
         # #! testing localizing Vc_
         #restrict = @. exp(-phi0^2/(2*(3*d_max)^2))
         #Vc_ .*= restrict
         Vc_ /=  maximum(abs.(Vc_))
-        Vc_ = velocity_regularization(Ω,phi0,Vc_)
         
-
         # Volume computation
         vol = sum(∫(phi0.<=0)dΩ)
 
