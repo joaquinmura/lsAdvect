@@ -136,16 +136,22 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
 
     # * == 5. Compliance speed
-    area = collect(get_array(∫(1.0)dΩ))
-
     V(u,E) = σ(u,E) ⊙ ε(u) 
 
+    #= old style
     # Remark: Vc is a `julia` vector array containing cell-averaged evaluations of V(u,E)
+    area = collect(get_array(∫(1.0)dΩ))
     Vc(uh,E) = opt_region .* collect( get_array(∫(V(uh,E))dΩ)) ./ area #! SLOW
+    =#
+
+    function Vc(u,E,ϕ)
+        #TODO ϕ could be ::Vector{Float64} or LazyArray
+        return velocity_regularization(Ω,ϕ,V(u,E))
+    end
 
     # * == 6. Solve first iteration
     uh  = solve_elasticity(Eₕ) # the very first time
-    Vc_ = Vc(uh,Eₕ)
+    Vc_ = Vc(uh,Eₕ,phi)
 
     vol = sum(∫(phi.<=0)dΩ)
     push!(compliance,sum(l(uh)))
@@ -183,15 +189,21 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         end
 
         # new displacement field
-        Eₕ = E[1]*(1 .- sH(phi0,slope=80)) + E[2]*sH(phi0,slope=80)
+        Eₕ = E[1]*(1 .- sH(phi0,slope=60)) + E[2]*sH(phi0,slope=60)
         #Eₕ = E[1]*(1 .- Hₑ(phi0)) + E[2]*Hₑ(phi0) # bad
         uₕ  = solve_elasticity(Eₕ)
 
         new_compliance = sum(l(uₕ))
 
         # velocity update
-        Vc_ = Vc(uₕ,Eₕ) 
+        #phi0 = vec(collect(get_array(phi0))) # convert LazyArray to Vector{Float64}
+        Vc_ = Vc(uₕ,Eₕ,phi0) 
+        # #! testing localizing Vc_
+        #restrict = @. exp(-phi0^2/(2*(3*d_max)^2))
+        #Vc_ .*= restrict
         Vc_ /=  maximum(abs.(Vc_))
+        Vc_ = velocity_regularization(Ω,phi0,Vc_)
+        
 
         # Volume computation
         vol = sum(∫(phi0.<=0)dΩ)
@@ -209,14 +221,14 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
             phi = copy(phi0) # shape update
             accepted_step = true
-            else
+        else
             # Rejected step
             sop.Δt *= 0.9
             tt = Formatting.format("                     *rejected* actualcompliance={:.4e} :: decreasing Δt to {:.4e}",compliance[end],sop.Δt)
             printstyled(tt,color=:cyan)
             println()
             accepted_step = false
-            end
+        end
 
         if mod(k,sop.each_save)==0 && accepted_step
         printstyled("iter: ",k,bold=true,color=:yellow)

@@ -62,15 +62,6 @@ SigNum(x;ϵ=0.1) = x/√(x^2 + ϵ^2)
 limiter(x;h::Real=1) = @. x*(abs(x)<=h) + h*(x>h) - h*(x<-h)
 
 
-"""
-Extended regularization
-"""
-function extended_regularization(Ω::Triangulation,j::Function;ϵ::Real=1e-3)
-    # ∫ ϵ^2*∇V⋅∇ϕ dΩ = -∫ χ_{ϕ=0} j(u)ϕ dΩ
-    #TODO 
-end
-
-
 
 """
 Godunov Hamiltonian 2D:
@@ -411,7 +402,7 @@ function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vma
     #TODO: Choose the signum function: TEST required!
     #signψ₀ = sign.(ϕ)
     #signψ₀ = Signum(ϕ)
-    signψ₀ = SigNum.(ϕ,ϵ=0.1)
+    signψ₀ = SigNum.(ϕ,ϵ=0.5) # 0.1
        
 
     if lowercase(scheme) == "upwind"
@@ -537,5 +528,75 @@ function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vma
 
     return ϕ
 end
+
+
+## Other functions that applies on levelsets
+
+
+"""
+Extended regularization
+
+Solves   ∫ ϵ²∇V⋅∇ϕ + Vϕ dΩ = -∫ χ_{ϕ=0} j(u)ϕ dΩ
+"""
+function extended_regularization(Ω::Triangulation,phi::Vector{Float64},j::Function;eps::Real=1e-3,thres::Real=0.75)
+    # ∫ ϵ^2*∇V⋅∇ϕ + Vϕ dΩ = -∫ χ_{ϕ=0} j(u)ϕ dΩ
+    order = 1
+    reffe = ReferenceFE(lagrangian,Float64,order)
+    V = TestFESpace(model,reffe, conformity=:H1) #  dirichlet_masks=[(true,false), (true,true)])
+    U  = TrialFESpace(V,[])
+    degree = 2*order
+    dΩ = Measure(Ω,degree)
+    #Γ  = BoundaryTriangulation(Ω.model,tags="boundary")
+    #dΓ = Measure(Γ,degree)
+    delta_reg = @. (exp(-phi^2) > thres)
+    dΣ = DiracDelta(Ω.model,delta_reg)
+    ϵ² = eps^2
+
+    a(v,ϕ) = ∫(ϵ²*∇(v)⋅∇(ϕ) + v*ϕ)dΩ
+    l(ϕ) = ∫(-j*ϕ)dΣ
+
+    op = AffineFEOperator(a,l,U,V)
+    vh = solve(op)
+
+    return vh
+end
+
+
+function velocity_regularization(Ω::Triangulation,phi,velo;thres::Real=0.75)
+  #TODO: phi could be a ::Vector{Float64} or ::LazyArray !!
+    #TODO: typeof(velo) = Gridap.CellData.OperationCellField{ReferenceDomain} is not CellField nor FEFunction
+    # ∫ ∇V⋅∇ϕ dΩ = ∫ χ_{ϕ=0} velo ϕ dΩ
+    reffe = ReferenceFE(lagrangian,Float64,1)
+    V = TestFESpace(model,reffe, conformity=:H1)
+    U  = TrialFESpace(V)
+    dΩ = Measure(Ω,2)
+    #Γ  = BoundaryTriangulation(Ω.model,tags="boundary")
+    #dΓ = Measure(Γ,2)
+    delta_reg = @. convert(Float64,exp(-phi^2) >= thres)
+    #dΣ = DiracDelta(Ω.model,delta_reg)
+
+    a(v,ϕ) = ∫(∇(v)⋅∇(ϕ))dΩ + ∫((1e12.*delta_reg)*v*ϕ)dΩ
+    #l(ϕ) = ∫(velo*ϕ)dΣ
+
+@show typeof(phi)
+    @show typeof(delta_reg)
+    @show typeof(velo)
+
+    rhs = (1e12.*delta_reg)*velo # 2nd or 3th iter ... no matching method ... change type of rhs !!!
+    @show typeof(rhs)
+    l(ϕ) = ∫(rhs*ϕ)dΩ
+
+    op = AffineFEOperator(a,l,U,V)
+    vh = solve(op)
+
+    # vh is projected onto element-wise grid
+    V0 = FESpace(model,ReferenceFE(lagrangian,Float64,0))
+    vh0 = interpolate_everywhere(vh,V0)
+
+    return get_free_dof_values(vh0) #,get_free_dof_values(vh)
+end
+
+
+
 
 #end # of module
