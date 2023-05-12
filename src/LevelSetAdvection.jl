@@ -95,7 +95,6 @@ Smoothed step function
     sH(x;slope::Real=10)
 
 """
-
 function sH(x;slope::Real=50)
     k = π*slope/2
     return @. (1 + tanh(k*x))/2
@@ -595,6 +594,19 @@ function velocity_regularization(Ω::Triangulation,phi,velo;thres::Real=0.75)
 end
 
 
+
+function secant_lag_ctrl(λ_k,λ_k_1,h_k,h_k_1,k;Vmax=10,Nvol = 10)
+    if k==1
+        λ = 10
+    elseif k==2
+        λ = 0
+    else
+        Vini = 10
+        Vmax_k = Vmax + (Vini - Vmax)*max(0,1-k/Nvol)
+        λ = λ_k - (λ_k - λ_k_1)/(h_k - h_k_1)
+    end
+    return λ
+end
 
 
 #end # of module
