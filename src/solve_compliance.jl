@@ -73,7 +73,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
             error("Working domain is empty!. Check 'masked_region' parameter.")
         end
     end
-    opt_region = sH(2*(mask_reg .- 0.5),slope=80)
+    opt_region = sH(2*(mask_reg .- 0.5),slope=75)
 
     # Finite Elements setting
     order = 1
@@ -95,7 +95,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
 
     # * == 4. Material setting
-    Eₕ = E[1]*(1 .- sH(phi,slope=80)) + E[2]*sH(phi,slope=80)
+    Eₕ = E[1]*(1 .- sH(phi)) + E[2]*sH(phi)
     νₕ = ν[1]
 
     println(" --- Compliance minimization ---");
@@ -175,6 +175,9 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     for k in 1:sop.max_iter
         # new shape
         phi0 = copy(phi)
+
+        # TODO : Update vol_penal with the secant method: https://qmro.qmul.ac.uk/xmlui/bitstream/handle/123456789/29145/Duddeck%20Shape%20optimization%20with%202017%20Accepted.pdf?sequence=1&isAllowed=y
+
         if accepted_step
             η = sop.vol_penal .* opt_region
             ∇ϕ = upwind2d_step(Ω,xc,phi0,Vc_ .- η, curvature_penalty = sop.curv_penal)
@@ -189,8 +192,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         end
 
         # new displacement field
-        Eₕ = E[1]*(1 .- sH(phi0,slope=60)) + E[2]*sH(phi0,slope=60)
-        #Eₕ = E[1]*(1 .- Hₑ(phi0)) + E[2]*Hₑ(phi0) # bad
+        Eₕ = E[1]*(1 .- sH(phi0)) + E[2]*sH(phi0)
         uₕ  = solve_elasticity(Eₕ)
 
         new_compliance = sum(l(uₕ))

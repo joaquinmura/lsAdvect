@@ -95,10 +95,12 @@ Smoothed step function
     sH(x;slope::Real=10)
 
 """
-function sH(x;slope::Real=100)
+
+function sH(x;slope::Real=50)
     k = π*slope/2
     return @. (1 + tanh(k*x))/2
 end
+
 
 
 """
