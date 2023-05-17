@@ -52,7 +52,17 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     #nv     = num_vertices(Ω.model) 
     dim        = num_dims(Ω) 
     compliance = []    # defines array to collect objective function values
+    Lagrangian = []    # Augmented Lagrangian values
     volume     = []
+    η_vol      = []    # Penalty parameter for volume constraint
+    λ_vol      = []    # Lagrange multiplier for volume constraint
+    h_vol      = []    # volume constraint
+    
+    λ⁰ = 0.2  # initial Lagrange multiplier
+    η⁰ = 0.1
+    Δη = 0.1
+    η_max = 5
+    nR = 50  # penalty relaxation iteration
 
     reinit_iter = [10,20] # Amount of reinitialization steps
     reinit_iter_thres = 400 # iteration that triggers reinit_iter[2] instead of reinit_iter[1]
@@ -153,9 +163,20 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     uh  = solve_elasticity(Eₕ) # the very first time
     Vc_ = opt_region .* Vc(uh,Eₕ,phi)
 
+    # * == 6.5. Volume constraint
+    vol_target = sop.vol_target * sum(∫(1.0)dΩ)
     vol = sum(∫(phi.<=0)dΩ)
-    push!(compliance,sum(l(uh)))
+    
     push!(volume,vol)      
+    push!(h_vol,vol - vol_target) 
+    push!(η_vol,η⁰)
+    push!(λ_vol,λ⁰)
+
+    push!(compliance,sum(l(uh)))
+    push!(Lagrangian,compliance[1] + λ⁰*h_vol[1] + η⁰/2*(h_vol[1])^2)
+
+#TODO now following https://www.sciencedirect.com/science/article/pii/S0045782518305619 "Level set based shape optimization using trimmed hexahedral meshes" CMAME 2019
+#? eqs (17) - (18)
 
     # limiting speed near the boundary
     Vc_ /= maximum(abs.(Vc_)) 
@@ -167,21 +188,37 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     )
 
 
-
-    # * == 6. Optimization Loop
+    # * == 7. Optimization Loop
     let phi=phi,Vc_=Vc_
+
     ∇ϕ=nothing
     accepted_step = true
+
     for k in 1:sop.max_iter
         # new shape
         phi0 = copy(phi)
 
-        # TODO : Update vol_penal with the secant method: https://qmro.qmul.ac.uk/xmlui/bitstream/handle/123456789/29145/Duddeck%20Shape%20optimization%20with%202017%20Accepted.pdf?sequence=1&isAllowed=y
+        # TODO : Update vol_penal with the secant method: https://qmro.qmul.ac.uk/xmlui/bitstream/handle/123456789/29145/Duddeck%20Shape%20optimization%20with%202017%20Accepted.pdf?sequence=1&isAllowed=y        
 
         if accepted_step
-            η = sop.vol_penal .* opt_region
-            ∇ϕ = upwind2d_step(Ω,xc,phi0,Vc_ .- η, curvature_penalty = sop.curv_penal)
+            if k<=nR
+                global λ¹ = λ⁰
+                global η¹ = η⁰
+            else
+                global λ¹ = λ_vol[k-1] + η_vol[k-1]*(volume )
+                global η¹ = min(η_vol[k-1] + Δη,η_max)
+            end
+
+            vel_N = Vc_ .- (λ¹.*opt_region)
+            ∇ϕ = upwind2d_step(Ω,xc,phi0, vel_N, curvature_penalty = sop.curv_penal)
+
+            push!(λ_vol,λ¹)
+            push!(η_vol,η¹)
+        else
+            push!(λ_vol,λ_vol[k-1])
+            push!(η_vol,η_vol[k-1])
         end
+
         phi0 = lazy_map(-,phi0,sop.Δt .* ∇ϕ)
 
         # Reinitialization step
@@ -198,23 +235,24 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         new_compliance = sum(l(uₕ))
 
         # velocity update
-        #phi0 = vec(collect(get_array(phi0))) # convert LazyArray to Vector{Float64}
         Vc_ = opt_region .* Vc(uₕ,Eₕ,phi0) 
-        # #! testing localizing Vc_
-        #restrict = @. exp(-phi0^2/(2*(3*d_max)^2))
-        #Vc_ .*= restrict
         Vc_ /=  maximum(abs.(Vc_))
         
         # Volume computation
         vol = sum(∫(phi0.<=0)dΩ)
 
-        printfmtln("[{:03d}] compliance={:.4e} | vol={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,new_compliance,vol,minimum(Vc_),maximum(Vc_))
+        new_h = vol - vol_target
+        new_lagrangian = new_compliance + λ_vol[end]*new_h + η_vol[end]/2*(new_h)^2
+
+        printfmtln("[{:03d}] lagrangian={:.4e} | compliance={:.4e} | vol={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,new_lagrangian,new_compliance,vol,minimum(Vc_),maximum(Vc_))
 
         #* Checking descent
-        if new_compliance < compliance[end] * (1 + sop.tolremont/sqrt(k/2))
+        if new_lagrangian < Lagrangian[end] * (1 + sop.tolremont/sqrt(k/2))
             # Acepted step
             push!(compliance,new_compliance)
             push!(volume,vol)      
+            push!(h_vol,new_h)           
+            push!(Lagrangian,new_lagrangian)
 
             #? Slight acceleration
             sop.Δt *= 1 + 0.8*log(1 +k*0.5)/7*0.005 # goes from 1.0 to 1.0035 in 2200 iterations

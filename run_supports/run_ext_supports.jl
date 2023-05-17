@@ -28,6 +28,7 @@ opts.neumann_tags = neu_tags
 opts.uD = [uD]
 opts.g = [g]
 opts.masked_region = @. convert(Float64,√((X - 0.5)^2 + (Y - 0.25)^2) <= 0.1)
+opts.vol_target = 0.3 # fraction of total volume
 
 # remark: optimization region is when mask = 0. Other values may have different usages
 
@@ -38,3 +39,4 @@ phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
 E = (1e8,1e5)
 ν = 0.3
 solve_compliance(Ω,phi,E,ν,opts)
+#solve_compliance_NL(Ω,phi,E,ν,opts) # not yet

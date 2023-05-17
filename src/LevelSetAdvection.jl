@@ -30,10 +30,12 @@ mutable struct ShapeOptParams
     Δt_min::Real         # minimal time step allowable
     curv_penal::Real     # Penalty factor for curvature during the advection.
     tolremont::Int       # Tolerance to relax descent condition in objective function
+    vol_target::Real  #
 
     function ShapeOptParams(outname="output", each_save=10,
                 each_reinit=3, max_iter=4000, vol_penal=0.03,
-                Δt=7e-3, Δt_min=1e-5, curv_penal=0, tolremont=20)
+                Δt=7e-3, Δt_min=1e-5, curv_penal=0, tolremont=20,
+                vol_target=0.1)
         shapeOptParams = new()
         shapeOptParams.outname = outname
         shapeOptParams.each_save = each_save
@@ -44,6 +46,7 @@ mutable struct ShapeOptParams
         shapeOptParams.Δt_min = Δt_min
         shapeOptParams.curv_penal = curv_penal
         shapeOptParams.tolremont = tolremont
+        shapeOptParams.vol_target = vol_target
         return shapeOptParams
     end
 
@@ -595,15 +598,19 @@ end
 
 
 
-function secant_lag_ctrl(λ_k,λ_k_1,h_k,h_k_1,k;Vmax=10,Nvol = 10)
+function secant_lag_ctrl(λ_,vol,vol_,k;Vmax=10,Nvol = 10)
     if k==1
         λ = 10
     elseif k==2
         λ = 0
     else
         Vini = 10
-        Vmax_k = Vmax + (Vini - Vmax)*max(0,1-k/Nvol)
-        λ = λ_k - (λ_k - λ_k_1)/(h_k - h_k_1)
+        #Vmax_k = Vmax + (Vini - Vmax)*max(0,1-k/Nvol)
+
+        @show k
+        @show λ_
+        @show vol_
+        λ = λ_[k-1] - (λ_[k-1] - λ_[k-2])/(Vini - Vmax)*Nvol * (vol - vol_[k-2]) * max(0,1-(k-1)/Nvol)
     end
     return λ
 end
