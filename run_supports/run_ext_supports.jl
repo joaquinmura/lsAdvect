@@ -14,7 +14,7 @@ add_tag_from_tags!(labels,"load",8)
 dir_tags = ["dirichlet"]
 neu_tags = ["load"]
 uD(x) = VectorValue(0.0,0.0)  
-g(x) = VectorValue(0.0,-10*(x[2]>=0.22)*(x[2]<=0.28))
+g(x) = VectorValue(0.0,-1e3*(x[2]>=0.22)*(x[2]<=0.28))
 
 xc = get_cellcenter_coordinates(Ω)
 X = [xc[k][1] for k in 1:length(xc)]
@@ -28,13 +28,14 @@ opts.neumann_tags = neu_tags
 opts.uD = [uD]
 opts.g = [g]
 opts.masked_region = @. convert(Float64,√((X - 0.5)^2 + (Y - 0.25)^2) <= 0.1)
-opts.vol_target = 0.3 # fraction of total volume
+opts.vol_target = 0.2 # fraction of total volume
+opts.tolremont = 2 # 20 by default
 
 # remark: optimization region is when mask = 0. Other values may have different usages
 
-ϕ_(x) = -Signum.( sin.(4*2π*x[1]).*cos.(5*2π*x[2]) ,β=2)
+ϕ_(x) = -Signum.( sin.(4*2π*x[1]).*cos.(7*2π*x[2]) ,β=2)
 ϕ = lazy_map(ϕ_,xc)
-phi = vec(collect(get_array(ϕ))) ##! AVOID! Too slow
+phi = vec(collect(get_array(ϕ)))
 
 E = (1e8,1e5)
 ν = 0.3

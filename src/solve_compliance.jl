@@ -62,7 +62,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     η⁰ = 0.1
     Δη = 0.1
     η_max = 5
-    nR = 50  # penalty relaxation iteration
+    nR = 25  # penalty relaxation iteration
 
     reinit_iter = [10,20] # Amount of reinitialization steps
     reinit_iter_thres = 400 # iteration that triggers reinit_iter[2] instead of reinit_iter[1]
@@ -107,16 +107,6 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     # * == 4. Material setting
     Eₕ = E[1]*(1 .- sH(phi)) + E[2]*sH(phi)
     νₕ = ν[1]
-
-    println(" --- Compliance minimization ---");
-    println(" Parameters:")
-    println(" E(void,solid) = ($(E[1]),$(E[2]))")
-    println(" Poisson ratio = $νₕ")
-    println(" Max. number of iterations   : $(sop.max_iter)")
-    println(" Magnitude of Volume penalty : $(sop.vol_penal)")
-    println(" Time step                   : $(sop.Δt)")
-    println(" Characteristic mesh size    : $d_max")
-    println("\n\n");
 
     function E_to_C(E;ν=νₕ)
         λ = (E * ν)/((1+ν)*(1-2*ν))
@@ -189,6 +179,19 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
 
     # * == 7. Optimization Loop
+
+    println(" --- Compliance minimization ---");
+    println(" Parameters:")
+    println(" E(void,solid) = ($(E[1]),$(E[2]))")
+    println(" Poisson ratio = $νₕ")
+    println(" Max. number of iterations   : $(sop.max_iter)")
+    println(" Magnitude of Volume penalty : $(sop.vol_penal)")
+    println(" Time step                   : $(sop.Δt)")
+    println(" Characteristic mesh size    : $d_max")
+    println(" Volume  (target)            : $vol_target")
+    println("\n\n");
+
+
     let phi=phi,Vc_=Vc_
 
     ∇ϕ=nothing
@@ -198,25 +201,25 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         # new shape
         phi0 = copy(phi)
 
-        # TODO : Update vol_penal with the secant method: https://qmro.qmul.ac.uk/xmlui/bitstream/handle/123456789/29145/Duddeck%20Shape%20optimization%20with%202017%20Accepted.pdf?sequence=1&isAllowed=y        
-
         if accepted_step
+            # Augmented Lagrangian scheme for volume control
             if k<=nR
                 global λ¹ = λ⁰
                 global η¹ = η⁰
             else
-                global λ¹ = λ_vol[k-1] + η_vol[k-1]*(volume )
-                global η¹ = min(η_vol[k-1] + Δη,η_max)
+                global λ¹ = λ_vol[end] .+ η_vol[end].*(volume[end] .- vol_target)
+                global η¹ = min(η_vol[end] + Δη,η_max)
             end
 
+            # Velocity update
             vel_N = Vc_ .- (λ¹.*opt_region)
             ∇ϕ = upwind2d_step(Ω,xc,phi0, vel_N, curvature_penalty = sop.curv_penal)
 
             push!(λ_vol,λ¹)
             push!(η_vol,η¹)
         else
-            push!(λ_vol,λ_vol[k-1])
-            push!(η_vol,η_vol[k-1])
+            push!(λ_vol,λ_vol[end])
+            push!(η_vol,η_vol[end])
         end
 
         phi0 = lazy_map(-,phi0,sop.Δt .* ∇ϕ)
@@ -244,7 +247,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         new_h = vol - vol_target
         new_lagrangian = new_compliance + λ_vol[end]*new_h + η_vol[end]/2*(new_h)^2
 
-        printfmtln("[{:03d}] lagrangian={:.4e} | compliance={:.4e} | vol={:.4e}  || min,max(V) =  ({:.4e} , {:.4e})",k,new_lagrangian,new_compliance,vol,minimum(Vc_),maximum(Vc_))
+        printfmtln("[{:03d}] lagrangian={:.4e} | compliance={:.4e} | vol={:.4e}  || (λ,η) =  ({:.4e} , {:.4e})",k,new_lagrangian,new_compliance,vol,λ_vol[end],η_vol[end])
 
         #* Checking descent
         if new_lagrangian < Lagrangian[end] * (1 + sop.tolremont/sqrt(k/2))
@@ -274,9 +277,14 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         writevtk(Ω,sop.outname*"/elasticity_"*lpad(k,3,"0"),cellfields=["uh"=>uₕ,"epsi"=>ε(uₕ),"sigma"=>σ(uₕ,Eₕ)],celldata=["speed"=>Vc_,"E"=>Eₕ,"phi"=>phi0])
         end
 
-        pp = plot(compliance, yaxis=:log10, marker=:circle)
-        display(pp)
-        sleep(0.1)
+
+        pp = plot(compliance, yaxis=:log10, marker=:circle, label="Compliance")
+        plot!(pp,Lagrangian, yaxis=:log10, marker=:circle, label="Lagrangian")
+        ppv = plot(volume, marker=:square , label="Volume")
+        plot!(ppv,[1,length(volume)],vol_target*[1,1], lc=:black, lw=2, label="Target")
+        ppp = plot(pp,ppv, layout = (1,2))
+        display(ppp)
+        sleep(0.01)
 
         # The End
         if sop.Δt < sop.Δt_min
