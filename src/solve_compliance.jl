@@ -47,6 +47,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     println("* Set of solutions will be stored into the $(sop.outname) folder.")
     mkpath(sop.outname)
 
+
     # and get some info
     #n      = num_cells(Ω)
     #nv     = num_vertices(Ω.model) 
@@ -191,6 +192,17 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     println(" Volume  (target)            : $vol_target")
     println("\n\n");
 
+    open("$(sop.outname)/parameters.txt","w") do io_param
+        println(io_param," --- Compliance minimization ---");
+        println(io_param," Parameters:")
+        println(io_param," E(void,solid) = ($(E[1]),$(E[2]))")
+        println(io_param," Poisson ratio = $νₕ")
+        println(io_param," Max. number of iterations   : $(sop.max_iter)")
+        println(io_param," Magnitude of Volume penalty : $(sop.vol_penal)")
+        println(io_param," Time step                   : $(sop.Δt)")
+        println(io_param," Characteristic mesh size    : $d_max")
+        println(io_param," Volume  (target)            : $vol_target")
+    end
 
     let phi=phi,Vc_=Vc_
 
@@ -228,7 +240,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         if mod(k,sop.each_reinit)==0
             riter = reinit_iter[1]*(k<reinit_iter_thres) + reinit_iter[2]*(k>=reinit_iter_thres)
             phi0 = ReinitHJ2d_update(Ω,xc,phi0,riter,scheme="Upwind",Δt=0.25*d_max)
-            phi0 = limiter(phi0,h=domain_diameter)
+            #phi0 = limiter(phi0,h=domain_diameter) # unnecessary?
         end
 
         # new displacement field
@@ -262,6 +274,18 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
 
             phi = copy(phi0) # shape update
             accepted_step = true
+
+            # export metric values
+            open("$(sop.outname)/compliance.txt","a") do io_compliance
+                printfmtln(io_compliance,"{:d}   {:.6e}",k,new_compliance)
+            end
+            open("$(sop.outname)/lagrangian.txt","a") do io_lagrangian
+                printfmtln(io_lagrangian,"$k  $new_lagrangian")
+            end
+            open("$(sop.outname)/volume.txt","a") do io_volume
+                printfmtln(io_volume,"$k  $vol")
+            end
+
         else
             # Rejected step
             sop.Δt *= 0.9

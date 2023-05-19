@@ -30,6 +30,7 @@ opts.g = [g]
 opts.masked_region = @. convert(Float64,√((X - 0.5)^2 + (Y - 0.25)^2) <= 0.1)
 opts.vol_target = 0.2 # fraction of total volume
 opts.tolremont = 2 # 20 by default
+opts.Δt_min = 1e-7 # 1e-5 by default
 
 # remark: optimization region is when mask = 0. Other values may have different usages
 
