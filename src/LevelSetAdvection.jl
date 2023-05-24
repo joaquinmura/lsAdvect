@@ -33,11 +33,12 @@ mutable struct ShapeOptParams
     vol_target::Real  #
 
     function ShapeOptParams(outname="output", each_save=10,
-                each_reinit=3, max_iter=4000, vol_penal=0.03,
+                each_reinit=3, max_iter=4000, vol_penal=0.03, masked_region=[],
                 Δt=7e-3, Δt_min=1e-5, curv_penal=0, tolremont=20,
                 vol_target=0.1)
         shapeOptParams = new()
         shapeOptParams.outname = outname
+        shapeOptParams.masked_region = masked_region
         shapeOptParams.each_save = each_save
         shapeOptParams.each_reinit = each_reinit
         shapeOptParams.max_iter = max_iter
@@ -167,6 +168,7 @@ end
 
 """
 Local Finite Difference derivatives across faces
+2D version
 
 returns ϕx⁺, ϕx⁻, ϕy⁺, ϕy⁻
 """
@@ -194,6 +196,47 @@ function local_FD_derivatives(ϕ,S,N,W,E,xc)
     
     return ϕxM,ϕxm,ϕyM,ϕym
 end
+
+
+"""
+Local Finite Difference derivatives across faces
+3D version
+
+returns ϕx⁺, ϕx⁻, ϕy⁺, ϕy⁻, ϕz⁺, ϕz⁻ 
+"""
+function local_FD_derivatives(ϕ,S,N,W,E,D,U,xc)
+    #? Trick: We repeat to BoundsError when 'e' is on the boundary 
+    #= original structure of N,S,E,W
+     N = [real north , center]
+     S = [center , real south]
+     E = [real east , center]
+     W = [center, real west]
+     D = [real down, center] ?? -- not yet verified
+     U = [center, real up] ??
+
+     length(N) = 1 when there is no 'real north' cell. This is why the repetition avoids undefs
+    =#
+    S = repeat(S,2) 
+    N = repeat(N,2)
+    E = repeat(E,2)
+    W = repeat(W,2)
+    D = repeat(D,2)
+    U = repeat(U,2)
+
+    # Finite differences: According to the ordering in Gridap #!CHECK for unstructured!
+    # * Here we avoid division by 0 on the boundary
+    ϕyM = (ϕ[N[2]] - ϕ[N[1]])/(xc[N[2]][2]-xc[N[1]][2] + 1e-30)  # Dy⁺(ϕ)  point upwards
+    ϕym = (ϕ[S[2]] - ϕ[S[1]])/(xc[S[2]][2]-xc[S[1]][2] + 1e-30)  # Dy⁻(ϕ)  point downwards
+    ϕxM = (ϕ[E[2]] - ϕ[E[1]])/(xc[E[2]][1]-xc[E[1]][1] + 1e-30)  # Dx⁺(ϕ)  point to the right
+    ϕxm = (ϕ[W[2]] - ϕ[W[1]])/(xc[W[2]][1]-xc[W[1]][1] + 1e-30)  # Dx⁻(ϕ)  point to the left
+    ϕzM = (ϕ[U[2]] - ϕ[U[1]])/(xc[U[2]][3]-xc[U[1]][3] + 1e-30)  # Dx⁺(ϕ)  point towards z+
+    ϕzm = (ϕ[D[2]] - ϕ[D[1]])/(xc[D[2]][3]-xc[D[1]][3] + 1e-30)  # Dx⁻(ϕ)  point towards z-
+    
+    return ϕxM,ϕxm,ϕyM,ϕym,ϕzM,ϕzm
+end
+
+
+
 
 """
 idx2ij(idx,grid_partition)
@@ -399,9 +442,9 @@ function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vma
     cell_to_faces  = get_faces(Ω.model.grid_topology,dim,dim-1)
     face_to_cells  = get_faces(Ω.model.grid_topology,dim-1,dim)
 
-    if dim !=2
-        error("Sorry: 3D is not implemented yet in `ls_advection.jl`")
-    end
+    #if dim !=2
+    #    error("Sorry: 3D is not implemented yet in `ls_advection.jl`")
+    #end
 
     #TODO: Choose the signum function: TEST required!
     #signψ₀ = sign.(ϕ)
@@ -419,7 +462,9 @@ function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vma
         res0 = 1e+10        
 
         for iter in 1:niter
-            for e in 1:nelem
+
+            if dim==2
+                for e in 1:nelem
 
                 # Recovering neighbourhood around element 'e'
                 S,N,W,E = face_to_cells[cell_to_faces[e]] # should be 4 in 2D!
@@ -441,7 +486,24 @@ function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vma
                 V⁻ = min(signψ₀[e],0)
 
                 δ[e] = V⁺ * (g⁺ - 1.0) + V⁻ * (g⁻ - 1.0)
+                end
+            else
+                for e in 1:nelem
+
+                    # Recovering neighbourhood around element 'e'
+                    S,N,W,E,D,U = face_to_cells[cell_to_faces[e]]
+                    ϕxM,ϕxm,ϕyM,ϕym,ϕzM,ϕzm = local_FD_derivatives(ϕ,S,N,W,E,D,U,xc)
+    
+                    g⁺ = √(max(min(ϕxM,0)^2,max(ϕxm,0)^2) + max(min(ϕyM,0)^2,max(ϕym,0)^2) + max(min(ϕzM,0)^2,max(ϕzm,0)^2))
+                    g⁻ = √(max(max(ϕxM,0)^2,min(ϕxm,0)^2) + max(max(ϕyM,0)^2,min(ϕym,0)^2) + max(max(ϕzM,0)^2,min(ϕzm,0)^2))
+    
+                    V⁺ = max(signψ₀[e],0)  # upwind with V=signψ₀ magnitude
+                    V⁻ = min(signψ₀[e],0)
+    
+                    δ[e] = V⁺ * (g⁺ - 1.0) + V⁻ * (g⁻ - 1.0)
+                end
             end
+
 
             # This is the scheme with Laplacian regularization:
             # ϕ(n+1) = ϕ(n) - Δt⋅sign(ϕ₀)⋅(|∇ϕ(n)| - 1) + Δt⋅ν⋅Δϕ
@@ -469,7 +531,9 @@ function ReinitHJ2d_update(Ω::Triangulation,xc,ϕ::AbstractArray,niter::Int;vma
     elseif lowercase(scheme) == "euler"
         #? Forward Euler method using one-sided ENO Finite Differences
         # better than upwind
-
+        if dim !=2
+            error("Sorry: Euler3D is not implemented in `ls_advection.jl`")
+        end
         ν = 0.001  # smoothing ... just in case
 
         ϕ1 = copy(ϕ)

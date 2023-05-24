@@ -109,6 +109,7 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
     Eₕ = E[1]*(1 .- sH(phi)) + E[2]*sH(phi)
     νₕ = ν[1]
 
+    #=
     function E_to_C(E;ν=νₕ)
         λ = (E * ν)/((1+ν)*(1-2*ν))
         μ = E/(2*(1+ν))
@@ -127,12 +128,20 @@ function solve_compliance(Ω::Triangulation,phi,E,ν,sop::ShapeOptParams)
         C = lazy_map(E_to_C,E)
         return C⊙ε(u)
     end
+    =#
+    function σ(u,E)
+        λ_ = (E.*νₕ)./((1+νₕ)*(1-2*νₕ))
+        μ_ = E./(2*(1+νₕ))
+        
+        return λ_*((tr∘ε(u))*(one∘ε(u))) + 2*μ_*ε(u)
+    end
+    
     l(v) = ∫(v⋅g)dΓ
 
     function solve_elasticity(E)
         a(u,v) = ∫( ε(v) ⊙ σ(u,E) )dΩ
         op = AffineFEOperator(a,l,U,V0)
-        return solve(op)
+        return solve(op) #! ERROR 3D case: Singular Exception!!
     end
 
 
